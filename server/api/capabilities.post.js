@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 		}
 
 		const probe = async (path, featureName) => {
-			const data = await cfFetch({ apiKey: body.apiKey, method: 'GET', path })
+			const data = await cfFetch({ apiKey: body.apiKey, method: 'GET', path, cacheTtl: 60000 })
 			if (data && data.success) return { available: true, reason: '' }
 			return {
 				available: false,
@@ -39,7 +39,8 @@ export default defineEventHandler(async (event) => {
 			const list = await cfFetch({
 				apiKey: body.apiKey,
 				method: 'GET',
-				path: `/zones/${zoneId}/rulesets?per_page=1`
+				path: `/zones/${zoneId}/rulesets?per_page=1`,
+				cacheTtl: 60000
 			})
 			if (!list || !list.success) {
 				return {
@@ -54,7 +55,8 @@ export default defineEventHandler(async (event) => {
 			const detail = await cfFetch({
 				apiKey: body.apiKey,
 				method: 'GET',
-				path: `/zones/${zoneId}/rulesets/${first.id}`
+				path: `/zones/${zoneId}/rulesets/${first.id}`,
+				cacheTtl: 60000
 			})
 			if (detail && detail.success) return { available: true, reason: '' }
 
@@ -70,7 +72,12 @@ export default defineEventHandler(async (event) => {
 		result.zones = await probe('/zones', 'Zones')
 
 		if (body.currZone) {
-			const zoneData = await cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}` })
+			const zoneData = await cfFetch({
+				apiKey: body.apiKey,
+				method: 'GET',
+				path: `/zones/${body.currZone}`,
+				cacheTtl: 60000
+			})
 			result.zone =
 				zoneData && zoneData.success
 					? { available: true, reason: '' }

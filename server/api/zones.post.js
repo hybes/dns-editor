@@ -9,14 +9,16 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
 		}
 
-		let data = await cfFetch({ apiKey: body.apiKey, method: 'GET', path: '/zones' })
+		let data = await cfFetch({ apiKey: body.apiKey, method: 'GET', path: '/zones', cacheTtl: 30000 })
 		if (!data.result) data.result = []
 
 		const totalPages = data?.result_info?.total_pages || 1
 		if (data && totalPages > 1) {
 			const pages = Array.from({ length: totalPages - 1 }, (_, idx) => idx + 2)
 			const results = await Promise.all(
-				pages.map((page) => cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones?page=${page}` }))
+				pages.map((page) =>
+					cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones?page=${page}`, cacheTtl: 30000 })
+				)
 			)
 			for (const pageData of results) {
 				if (pageData && pageData.success && pageData.result) data.result = data.result.concat(pageData.result)
@@ -35,7 +37,8 @@ export default defineEventHandler(async (event) => {
 					const sslData = await cfFetch({
 						apiKey: body.apiKey,
 						method: 'GET',
-						path: `/zones/${zone.id}/settings/ssl`
+						path: `/zones/${zone.id}/settings/ssl`,
+						cacheTtl: 30000
 					})
 					if (sslData && sslData.success) zone.ssl = sslData
 				}

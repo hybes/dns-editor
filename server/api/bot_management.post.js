@@ -14,7 +14,12 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'Zone ID is required' })
 		}
 
-		return await cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}/bot_management` })
+		return await cfFetch({
+			apiKey: body.apiKey,
+			method: 'GET',
+			path: `/zones/${body.currZone}/bot_management`,
+			cacheTtl: 15000
+		})
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({

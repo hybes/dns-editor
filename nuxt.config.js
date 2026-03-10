@@ -79,6 +79,11 @@ export default defineNuxtConfig({
 		icons: ['clarity']
 	},
 
+	runtimeConfig: {
+		openaiApiKey: process.env.OPENAI_API_KEY || '',
+		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5-nano'
+	},
+
 	css: ['~/assets/css/main.css'],
 
 	compatibilityDate: '2026-01-01'

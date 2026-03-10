@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
@@ -52,12 +52,18 @@ export default defineEventHandler(async (event) => {
 			}
 		}
 
-		return await cfFetch({
+		const result = await cfFetch({
 			apiKey: body.apiKey,
 			method: 'PUT',
 			path: `/zones/${body.currZone}/dns_records/${body.currDnsRecord}`,
 			body: bodyToSend
 		})
+
+		if (result?.success) {
+			invalidateCfCache({ apiKey: body.apiKey, paths: [`/zones/${body.currZone}`] })
+		}
+
+		return result
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({

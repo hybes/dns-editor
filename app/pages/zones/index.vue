@@ -161,6 +161,8 @@ const searchInput = ref(null)
 const searchQuery = ref('')
 const capabilityMissing = ref([])
 const viewMode = ref('grid')
+const zonesCacheTtl = 30000
+const zonesCache = useState('zones-cache', () => ({}))
 const zonesRequestBody = computed(() => ({ apiKey: apiKey.value }))
 const {
 	data: zonesData,
@@ -178,6 +180,16 @@ const columns = [
 	{ id: 'status', accessorKey: 'status', header: 'Status' },
 	{ id: 'actions', header: 'Actions', enableSorting: false }
 ]
+
+const getZonesCacheKey = () => apiKey.value
+const readZonesCache = () => zonesCache.value[getZonesCacheKey()]
+const writeZonesCache = (items) => {
+	if (!apiKey.value) return
+	zonesCache.value[getZonesCacheKey()] = {
+		zones: items,
+		fetchedAt: Date.now()
+	}
+}
 
 // Function to focus and select text in search input
 const focusSearchInput = () => {
@@ -220,6 +232,12 @@ onMounted(async () => {
 	const savedView = localStorage.getItem('zones-view-mode')
 	if (savedView === 'grid' || savedView === 'table') viewMode.value = savedView
 
+	const cacheEntry = readZonesCache()
+	if (cacheEntry?.zones?.length) {
+		zones.value = cacheEntry.zones
+		loading.value = false
+	}
+
 	await Promise.all([capsPromise, getZones()])
 })
 
@@ -239,11 +257,23 @@ watch(viewMode, (v) => {
 	localStorage.setItem('zones-view-mode', v)
 })
 
-const getZones = async () => {
+const getZones = async ({ preferCache = true } = {}) => {
+	if (preferCache) {
+		const cacheEntry = readZonesCache()
+		if (cacheEntry?.zones?.length) {
+			zones.value = cacheEntry.zones
+			if (Date.now() - cacheEntry.fetchedAt < zonesCacheTtl) {
+				loading.value = false
+				return
+			}
+		}
+	}
+
 	try {
 		await refreshZones()
 		if (zonesError.value) throw zonesError.value
 		zones.value = zonesData.value?.result || []
+		writeZonesCache(zones.value)
 	} catch (error) {
 		console.error('Error fetching zones:', error)
 		const toast = useToast()

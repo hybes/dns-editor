@@ -14,8 +14,13 @@ export default defineEventHandler(async (event) => {
 		}
 
 		const [data, sslData] = await Promise.all([
-			cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}` }),
-			cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}/settings/ssl` })
+			cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}`, cacheTtl: 15000 }),
+			cfFetch({
+				apiKey: body.apiKey,
+				method: 'GET',
+				path: `/zones/${body.currZone}/settings/ssl`,
+				cacheTtl: 15000
+			})
 		])
 		if (!data.success) return data
 		data.result.ssl = sslData && sslData.success ? sslData.result : { value: 'unknown' }

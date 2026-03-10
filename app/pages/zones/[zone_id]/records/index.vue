@@ -6,6 +6,12 @@
 				<UButton variant="outline" color="success" icon="i-clarity-plus-circle-solid" @click="navigateToCreate">
 					Create Record
 				</UButton>
+				<AiDnsEditorModal
+					:api-key="apiKey"
+					:zone-id="zoneId"
+					:zone-name="zoneName"
+					@applied="handleAiApplied"
+				/>
 				<UButton
 					v-if="canRulesets"
 					variant="outline"
@@ -1322,5 +1328,10 @@ const clearFilters = () => {
 
 	// Clear URL query params
 	router.push({ query: {} })
+}
+
+const handleAiApplied = async () => {
+	markRecordsUpdated()
+	await getDns({ force: true })
 }
 </script>
