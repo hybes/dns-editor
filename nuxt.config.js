@@ -81,7 +81,7 @@ export default defineNuxtConfig({
 
 	runtimeConfig: {
 		openaiApiKey: process.env.OPENAI_API_KEY || '',
-		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5-nano'
+		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5.4-nano'
 	},
 
 	css: ['~/assets/css/main.css'],

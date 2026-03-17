@@ -45,7 +45,8 @@ export default defineEventHandler(async (event) => {
 
 		const client = new OpenAI({ apiKey: config.openaiApiKey })
 		const completion = await client.chat.completions.create({
-			model: config.openaiDnsModel || 'gpt-5-nano',
+			model: config.openaiDnsModel || 'gpt-5.4-nano',
+			reasoning_effort: 'none',
 			messages: [
 				{ role: 'system', content: SYSTEM_PROMPT },
 				{
