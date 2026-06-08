@@ -11,14 +11,35 @@
 				subtitle="Fetching zone list from Cloudflare…"
 			/>
 			<div v-else-if="!loading" class="flex w-full flex-col items-center justify-center gap-6">
-				<div class="flex flex-col items-center justify-center gap-2">
-					<h1 class="text-center text-2xl font-semibold">Cloudflare DNS Editor</h1>
+				<div class="flex flex-col items-center justify-center gap-3">
+					<div class="flex items-center gap-2.5">
+						<div
+							class="bg-primary/10 ring-primary/20 flex h-9 w-9 items-center justify-center rounded-xl ring-1"
+						>
+							<UIcon name="i-heroicons-cloud" class="text-primary h-5 w-5" />
+						</div>
+						<h1 class="text-2xl font-semibold tracking-tight">DNS Manager</h1>
+					</div>
 					<CapabilityIndicator :missing-items="capabilityMissing" />
 				</div>
 				<div class="max-w-8xl dark:border-comet-700 flex w-full flex-col rounded-lg border p-4">
 					<div class="mb-4 flex flex-col gap-2">
 						<h2 class="text-lg font-medium">Your Zones</h2>
 						<div class="text-comet-500 text-sm">Select a zone to manage its DNS records</div>
+					</div>
+					<div v-if="recentZones.length" class="mb-4 flex flex-wrap items-center gap-2">
+						<span class="text-comet-500 text-xs font-medium">Recent:</span>
+						<UButton
+							v-for="z in recentZones"
+							:key="z.id"
+							size="xs"
+							variant="soft"
+							color="neutral"
+							icon="i-heroicons-clock"
+							@click="navigateToZone(z.id)"
+						>
+							{{ z.name }}
+						</UButton>
 					</div>
 					<div class="relative mb-4 w-full">
 						<UTooltip text="Press '/' to search">
@@ -34,13 +55,16 @@
 								@focus="focusSearchInput"
 							/>
 						</UTooltip>
-						<span
+						<UButton
 							v-if="searchQuery"
-							class="text-comet-500 hover:text-comet-700 absolute top-2 right-2 cursor-pointer"
+							variant="ghost"
+							color="neutral"
+							size="xs"
+							icon="i-heroicons-x-mark-20-solid"
+							aria-label="Clear search"
+							class="absolute top-1.5 right-1.5"
 							@click="searchQuery = ''"
-						>
-							<UIcon name="i-heroicons-x-mark-20-solid" class="h-5 w-5" />
-						</span>
+						/>
 					</div>
 					<div class="mb-4 flex w-full flex-wrap items-center justify-between gap-3">
 						<div class="text-comet-500 text-sm">{{ filteredZones.length }} zones</div>
@@ -66,12 +90,30 @@
 						</div>
 					</div>
 
-					<div v-if="viewMode === 'grid'" class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					<div
+						v-if="!filteredZones.length"
+						class="flex flex-col items-center justify-center gap-3 py-10 text-center"
+					>
+						<UIcon name="i-heroicons-globe-alt" class="text-comet-400 h-8 w-8" />
+						<p class="text-comet-600 dark:text-comet-300 text-sm">
+							{{ searchQuery ? 'No zones match your search.' : 'No zones found for this API token.' }}
+						</p>
+					</div>
+
+					<div
+						v-else-if="viewMode === 'grid'"
+						class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+					>
 						<div
 							v-for="zone in filteredZones"
 							:key="zone.id"
-							class="border-comet-200 hover:bg-comet-50 dark:border-comet-700 dark:hover:bg-comet-800 flex cursor-pointer flex-col gap-3 rounded-lg border p-4"
+							role="button"
+							tabindex="0"
+							:aria-label="`Manage DNS for ${zone.name}`"
+							class="border-comet-200 hover:bg-comet-50 dark:border-comet-700 dark:hover:bg-comet-800 focus-visible:ring-primary flex cursor-pointer flex-col gap-3 rounded-lg border p-4 focus-visible:ring-2 focus-visible:outline-none"
 							@click="navigateToZone(zone.id)"
+							@keydown.enter.prevent="navigateToZone(zone.id)"
+							@keydown.space.prevent="navigateToZone(zone.id)"
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div class="min-w-0">
@@ -153,6 +195,7 @@
 
 <script setup>
 const appBootLoading = useState('appBootLoading')
+const { getApiKey } = useSession()
 const apiKey = ref('')
 const zones = ref([])
 const loading = ref(true)
@@ -161,6 +204,7 @@ const searchInput = ref(null)
 const searchQuery = ref('')
 const capabilityMissing = ref([])
 const viewMode = ref('grid')
+const recentZones = ref([])
 const zonesCacheTtl = 30000
 const zonesCache = useState('zones-cache', () => ({}))
 const zonesRequestBody = computed(() => ({ apiKey: apiKey.value }))
@@ -207,16 +251,27 @@ const filteredZones = computed(() => {
 
 	const query = searchQuery.value.toLowerCase()
 	return zones.value.filter(
-		(zone) => zone.name.toLowerCase().includes(query) || zone.status.toLowerCase().includes(query)
+		(zone) => zone?.name?.toLowerCase().includes(query) || zone?.status?.toLowerCase().includes(query)
 	)
 })
 
+const addRecentZone = (entry) => {
+	const rest = recentZones.value.filter((z) => z.id !== entry.id)
+	recentZones.value = [entry, ...rest].slice(0, 6)
+	localStorage.setItem(STORAGE_KEYS.recentZones, JSON.stringify(recentZones.value))
+}
+
 onMounted(async () => {
-	apiKey.value = (localStorage.getItem('cf-api-key') || '').trim()
-	if (!apiKey.value) {
-		router.push('/login')
-		return
+	apiKey.value = getApiKey()
+	if (!apiKey.value) return
+
+	try {
+		const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.recentZones) || '[]')
+		recentZones.value = (Array.isArray(parsed) ? parsed : []).filter((z) => z && z.id && z.name)
+	} catch {
+		recentZones.value = []
 	}
+
 	const capsPromise = (async () => {
 		try {
 			const { loadGlobal, missing } = useCapabilities()
@@ -292,13 +347,12 @@ const getZones = async ({ preferCache = true } = {}) => {
 }
 
 const navigateToZone = (zoneId) => {
-	// Also store in localStorage for compatibility with older pages
-	localStorage.setItem('cf-zone-id', zoneId)
+	localStorage.setItem(STORAGE_KEYS.zoneId, zoneId)
 
-	// Look up zone name to store it too
 	const zone = zones.value.find((z) => z.id === zoneId)
 	if (zone) {
-		localStorage.setItem('cf-zone-name', zone.name)
+		localStorage.setItem(STORAGE_KEYS.zoneName, zone.name)
+		addRecentZone({ id: zone.id, name: zone.name })
 	}
 
 	router.push(`/zones/${zoneId}/records`)

@@ -22,6 +22,15 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'Bypass token is required' })
 		}
 
+		// The token is interpolated into a Cloudflare WAF rule expression, so constrain it
+		// to a safe character set to prevent expression injection.
+		if (!/^[A-Za-z0-9_-]{8,256}$/.test(body.bypassToken)) {
+			throw createError({
+				statusCode: 400,
+				statusMessage: 'Bypass token must be 8-256 characters using letters, numbers, hyphens or underscores'
+			})
+		}
+
 		const actionParameters =
 			body.actionParameters && typeof body.actionParameters === 'object' ? body.actionParameters : {}
 

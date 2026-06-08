@@ -1,7 +1,7 @@
 <template>
 	<div v-if="missingItems.length" class="flex items-center">
 		<UPopover>
-			<UButton size="xs" variant="soft" color="yellow" icon="i-heroicons-exclamation-triangle">
+			<UButton size="xs" variant="soft" color="warning" icon="i-heroicons-exclamation-triangle">
 				Limited access
 			</UButton>
 			<template #content>

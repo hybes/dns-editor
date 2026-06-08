@@ -66,6 +66,16 @@ export default defineEventHandler(async (event) => {
 				continue
 			}
 
+			// On an in-place update, keep the existing proxied state rather than letting the
+			// AI's default (false) silently un-proxy a record and expose the origin.
+			if (
+				change.action === 'update' &&
+				payload.proxied !== undefined &&
+				typeof change.existingProxied === 'boolean'
+			) {
+				payload.proxied = change.existingProxied
+			}
+
 			const response = await cfFetch({
 				apiKey: body.apiKey,
 				method: change.action === 'update' ? 'PUT' : 'POST',
@@ -104,7 +114,8 @@ export default defineEventHandler(async (event) => {
 		}
 
 		return {
-			success: failed === 0,
+			// Only a success if something was actually applied and nothing failed.
+			success: failed === 0 && created + updated > 0,
 			result: {
 				created,
 				updated,

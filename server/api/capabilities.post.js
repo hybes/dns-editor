@@ -103,7 +103,7 @@ export default defineEventHandler(async (event) => {
 				result.dnsViews = await probe(`/accounts/${accountId}/dns_settings/views`, 'DNS Views')
 				result.dnsFirewall = await probe(`/accounts/${accountId}/dns_firewall`, 'DNS Firewall')
 				result.accountAnalytics = await probeGraphql(
-					'query ($accountTag: string!, $date_geq: Date!, $date_leq: Date!) { viewer { accounts(filter: { accountTag: $accountTag }) { dnsAnalyticsAdaptiveGroups(filter: { date_geq: $date_geq, date_leq: $date_leq } limit: 1) { count } } } }',
+					'query ($accountTag: String!, $date_geq: Date!, $date_leq: Date!) { viewer { accounts(filter: { accountTag: $accountTag }) { dnsAnalyticsAdaptiveGroups(filter: { date_geq: $date_geq, date_leq: $date_leq } limit: 1) { count } } } }',
 					{ accountTag: accountId, date_geq: '2025-01-01', date_leq: '2025-01-02' },
 					'Account Analytics'
 				)

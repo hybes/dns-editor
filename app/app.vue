@@ -19,17 +19,12 @@
 </template>
 
 <script setup>
+// The global auth middleware (~/middleware/auth.global.js) owns the redirect to
+// /login when no API key is present, so app boot only needs to release the splash.
 const appBootLoading = useState('appBootLoading', () => true)
-const apiKey = ref('')
 
 onMounted(() => {
-	apiKey.value = (localStorage.getItem('cf-api-key') || '').trim()
-	if (apiKey.value) {
-		appBootLoading.value = false
-	} else {
-		useRouter().push('/login')
-		appBootLoading.value = false
-	}
+	appBootLoading.value = false
 })
 </script>
 

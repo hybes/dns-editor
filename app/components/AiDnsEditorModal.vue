@@ -28,7 +28,13 @@
 					</p>
 				</div>
 
-				<UTextarea v-model="input" :rows="12" placeholder="Paste DNS instructions here..." class="w-full" />
+				<UTextarea
+					v-model="input"
+					:rows="12"
+					placeholder="Paste DNS instructions here..."
+					aria-label="DNS instructions to parse"
+					class="w-full"
+				/>
 
 				<div
 					v-if="errorMessage"

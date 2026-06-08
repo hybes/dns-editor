@@ -46,11 +46,23 @@
 
 					<div v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</div>
 
-					<pre
-						v-if="result"
-						class="max-h-[520px] overflow-auto rounded-lg bg-stone-100 p-4 text-xs dark:bg-stone-950"
-						>{{ result }}</pre
-					>
+					<div v-if="result" class="flex flex-col gap-2">
+						<div class="flex justify-end">
+							<UButton
+								size="xs"
+								variant="outline"
+								color="neutral"
+								icon="i-clarity-clipboard-line"
+								@click="copyResult"
+							>
+								Copy JSON
+							</UButton>
+						</div>
+						<pre
+							class="max-h-[520px] overflow-auto rounded-lg bg-stone-100 p-4 text-xs dark:bg-stone-950"
+							>{{ result }}</pre
+						>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -59,10 +71,10 @@
 
 <script setup>
 const route = useRoute()
-const router = useRouter()
+const { getApiKey } = useSession()
 
 const apiKey = ref('')
-const zoneName = ref(localStorage.getItem('cf-zone-name') || '')
+const zoneName = ref('')
 const zoneId = computed(() => route.params.zone_id)
 
 const capabilities = ref(null)
@@ -77,6 +89,24 @@ const payload = ref('{}')
 const loading = ref(false)
 const error = ref('')
 const result = ref('')
+const toast = useToast()
+
+const copyResult = async () => {
+	if (!result.value) return
+	try {
+		await navigator.clipboard.writeText(result.value)
+		toast.add({
+			id: 'copy-result' + Date.now(),
+			title: 'Copied',
+			description: 'Result copied to clipboard',
+			icon: 'i-clarity-check-circle-solid',
+			color: 'success',
+			duration: 2000
+		})
+	} catch {
+		error.value = 'Clipboard is unavailable in this browser'
+	}
+}
 
 const loadCaps = async () => {
 	try {
@@ -124,11 +154,9 @@ const run = async () => {
 }
 
 onMounted(async () => {
-	apiKey.value = localStorage.getItem('cf-api-key')
-	if (!apiKey.value) {
-		router.push('/login')
-		return
-	}
+	apiKey.value = getApiKey()
+	if (!apiKey.value) return
+	zoneName.value = localStorage.getItem(STORAGE_KEYS.zoneName) || ''
 	await loadCaps()
 })
 </script>

@@ -24,7 +24,7 @@
 				>
 					<div class="flex min-w-[220px] flex-col gap-1">
 						<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Phase</span>
-						<USelect v-model="selectedPhase" :items="phaseOptions" class="w-full" />
+						<USelect v-model="selectedPhase" :items="phaseOptions" class="w-full" aria-label="Phase" />
 					</div>
 
 					<div class="flex min-w-[280px] flex-1 flex-col gap-1">
@@ -36,6 +36,7 @@
 							label-key="label"
 							placeholder="Select a ruleset"
 							class="w-full"
+							aria-label="Ruleset"
 						/>
 					</div>
 
@@ -68,7 +69,12 @@
 						<div class="flex flex-col gap-1">
 							<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Bypass token</span>
 							<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-								<UInput v-model="bypassToken" placeholder="Token value" class="flex-1" />
+								<UInput
+									v-model="bypassToken"
+									placeholder="Token value"
+									class="flex-1"
+									aria-label="Bypass token"
+								/>
 								<div class="flex gap-2">
 									<UButton
 										variant="outline"
@@ -93,7 +99,7 @@
 
 						<div class="flex flex-col gap-1">
 							<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Description</span>
-							<UInput v-model="description" placeholder="Allow Rules" />
+							<UInput v-model="description" placeholder="Allow Rules" aria-label="Description" />
 						</div>
 					</div>
 
@@ -103,7 +109,7 @@
 								<span class="text-sm font-medium text-stone-700 dark:text-stone-200"
 									>Skip current ruleset</span
 								>
-								<USwitch v-model="skipCurrentRuleset" />
+								<USwitch v-model="skipCurrentRuleset" aria-label="Skip current ruleset" />
 							</div>
 
 							<div class="flex flex-col gap-1">
@@ -113,6 +119,7 @@
 									:items="phaseOptions"
 									multiple
 									placeholder="Select phases"
+									aria-label="Skip phases"
 								/>
 							</div>
 
@@ -125,6 +132,7 @@
 									:items="productOptions"
 									multiple
 									placeholder="Select products"
+									aria-label="Skip products"
 								/>
 							</div>
 						</div>
@@ -132,12 +140,12 @@
 						<div class="flex flex-col gap-2">
 							<div class="flex items-center justify-between">
 								<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Enabled</span>
-								<USwitch v-model="enabled" />
+								<USwitch v-model="enabled" aria-label="Enabled" />
 							</div>
 
 							<div class="flex items-center justify-between">
 								<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Logging</span>
-								<USwitch v-model="loggingEnabled" />
+								<USwitch v-model="loggingEnabled" aria-label="Logging" />
 							</div>
 
 							<div class="flex flex-col gap-1">
@@ -187,12 +195,12 @@
 
 <script setup>
 const route = useRoute()
-const router = useRouter()
+const { getApiKey } = useSession()
 const toast = useToast()
 
 const zoneId = computed(() => route.params.zone_id)
 const apiKey = ref('')
-const zoneName = ref(localStorage.getItem('cf-zone-name') || '')
+const zoneName = ref('')
 const capabilities = ref(null)
 const capabilityMissing = ref([])
 const canRulesets = computed(() =>
@@ -482,11 +490,9 @@ const copyToken = async () => {
 }
 
 onMounted(async () => {
-	apiKey.value = (localStorage.getItem('cf-api-key') || '').trim()
-	if (!apiKey.value) {
-		router.push('/login')
-		return
-	}
+	apiKey.value = getApiKey()
+	if (!apiKey.value) return
+	zoneName.value = localStorage.getItem(STORAGE_KEYS.zoneName) || ''
 	try {
 		const { loadZone, missing } = useCapabilities()
 		const caps = await loadZone(apiKey.value, zoneId.value)

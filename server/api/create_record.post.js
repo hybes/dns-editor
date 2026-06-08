@@ -14,14 +14,28 @@ export default defineEventHandler(async (event) => {
 				})
 			}
 
-			bodyToSend.data = body.data
+			// Valid SRV names require the _service._proto.name convention. The client may
+			// send service/proto with or without the leading underscore, so normalise here.
+			const withUnderscore = (value) => {
+				const str = String(value)
+				return str.startsWith('_') ? str : `_${str}`
+			}
+			const service = withUnderscore(body.data.service)
+			const proto = withUnderscore(body.data.proto)
 
-			if (body.data.port) bodyToSend.data.port = Number(body.data.port)
-			if (body.data.priority) bodyToSend.data.priority = Number(body.data.priority)
-			if (body.data.weight) bodyToSend.data.weight = Number(body.data.weight)
+			bodyToSend.data = { ...body.data, service, proto }
 
-			const dnsName = body.data.service + '.' + body.data.proto + '.' + body.data.name
-			bodyToSend.name = dnsName
+			// Coerce by presence, not truthiness, so a legitimate 0 isn't dropped as a string.
+			const toNumber = (value) =>
+				value === undefined || value === null || value === '' ? undefined : Number(value)
+			const port = toNumber(body.data.port)
+			const priority = toNumber(body.data.priority)
+			const weight = toNumber(body.data.weight)
+			if (port !== undefined) bodyToSend.data.port = port
+			if (priority !== undefined) bodyToSend.data.priority = priority
+			if (weight !== undefined) bodyToSend.data.weight = weight
+
+			bodyToSend.name = `${service}.${proto}.${body.data.name}`
 			bodyToSend.type = 'SRV'
 			bodyToSend.ttl = 1
 		} else if (body.dns) {

@@ -1,13 +1,13 @@
 <template>
 	<div class="min-h-screen w-full">
 		<div :class="innerClass">
-			<div v-if="showActions" class="flex items-center justify-end gap-2 pb-4">
+			<div class="flex items-center justify-end gap-2 pb-4">
 				<ClientOnly v-if="showTheme">
 					<UButton
 						:icon="isDark ? 'i-heroicons-moon-20-solid' : 'i-heroicons-sun-20-solid'"
 						color="neutral"
 						variant="outline"
-						aria-label="Theme"
+						:aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
 						@click="isDark = !isDark"
 					/>
 					<template #fallback>
@@ -15,7 +15,7 @@
 					</template>
 				</ClientOnly>
 				<UButton
-					v-if="showLogout"
+					v-if="showLogout && hasApiKey"
 					color="error"
 					variant="outline"
 					icon="i-heroicons-arrow-right-on-rectangle"
@@ -41,39 +41,11 @@ const innerClass = computed(() => {
 	return props.fullWidth ? base : `${base} max-w-8xl`
 })
 
-const router = useRouter()
-const apiKey = ref('')
-const colorMode = useColorMode()
-
-const showActions = computed(() => Boolean(apiKey.value))
-
-const isDark = computed({
-	get() {
-		return colorMode.value === 'dark'
-	},
-	set() {
-		colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
-	}
-})
+const { getApiKey, logout } = useSession()
+const isDark = useIsDark()
+const hasApiKey = ref(false)
 
 onMounted(() => {
-	apiKey.value = (localStorage.getItem('cf-api-key') || '').trim()
+	hasApiKey.value = Boolean(getApiKey())
 })
-
-const logout = () => {
-	localStorage.removeItem('cf-api-key')
-	localStorage.removeItem('cf-zone-id')
-	localStorage.removeItem('cf-zone-name')
-	localStorage.removeItem('cf-dns-id')
-	localStorage.removeItem('cf-dns-name')
-	localStorage.removeItem('zones-view-mode')
-
-	const caps = useState('cf-capabilities')
-	if (caps.value) {
-		caps.value = { apiKey: null, global: null, zones: {}, loading: false }
-	}
-
-	apiKey.value = ''
-	router.push('/login')
-}
 </script>

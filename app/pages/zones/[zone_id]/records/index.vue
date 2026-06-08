@@ -13,50 +13,32 @@
 					@applied="handleAiApplied"
 				/>
 				<UButton
-					v-if="canRulesets"
 					variant="outline"
-					color="primary"
-					icon="i-heroicons-shield-check"
-					:to="`/zones/${zoneId}/rules`"
+					color="neutral"
+					icon="i-heroicons-arrow-down-tray"
+					:loading="exportLoading"
+					@click="exportZone"
 				>
-					Rules
+					Export
 				</UButton>
 				<UButton
-					v-if="canAccountAnalytics"
 					variant="outline"
-					color="primary"
-					icon="i-heroicons-chart-bar"
-					:to="`/zones/${zoneId}/analytics`"
+					color="neutral"
+					icon="i-heroicons-arrow-up-tray"
+					@click="importModalOpen = true"
 				>
-					Analytics
+					Import
 				</UButton>
-				<UButton
-					v-if="canTurnstile"
-					variant="outline"
-					color="primary"
-					icon="i-heroicons-shield-exclamation"
-					:to="`/zones/${zoneId}/turnstile`"
-				>
-					Turnstile
-				</UButton>
-				<UButton
-					v-if="canDnsViews"
-					variant="outline"
-					color="primary"
-					icon="i-heroicons-squares-plus"
-					:to="`/zones/${zoneId}/dns-views`"
-				>
-					DNS Views
-				</UButton>
-				<UButton
-					v-if="canDnsFirewall"
-					variant="outline"
-					color="primary"
-					icon="i-heroicons-shield-check"
-					:to="`/zones/${zoneId}/dns-firewall`"
-				>
-					DNS Firewall
-				</UButton>
+				<UDropdownMenu v-if="moreNavItems.length" :items="moreNavItems" :content="{ align: 'end' }">
+					<UButton
+						variant="outline"
+						color="primary"
+						icon="i-heroicons-squares-2x2"
+						trailing-icon="i-heroicons-chevron-down-20-solid"
+					>
+						More
+					</UButton>
+				</UDropdownMenu>
 				<UBadge v-if="searchQuery || selectedStatus.length > 0" color="primary" class="flex items-center gap-2">
 					<span v-if="searchQuery">Search: {{ searchQuery }}</span>
 					<span v-if="selectedStatus.length > 0">Types: {{ selectedStatus.join(', ') }}</span>
@@ -113,7 +95,7 @@
 					</UTooltip>
 					<div v-if="canSsl" class="relative">
 						<UDropdownMenu :items="sslMenuItems" :content="{ align: 'end' }">
-							<UButton variant="ghost" color="neutral" size="sm" class="p-1">
+							<UButton variant="ghost" color="neutral" size="sm" class="p-1" aria-label="Change SSL mode">
 								<UIcon
 									v-if="zone.ssl?.value === 'strict'"
 									name="i-clarity-lock-solid"
@@ -161,15 +143,19 @@
 					</div>
 				</div>
 				<div class="flex translate-x-[12px] flex-wrap items-center justify-center gap-4">
-					<div
+					<UButton
 						v-for="ns in zone.name_servers || []"
 						:key="ns"
-						class="group flex cursor-pointer items-center gap-4"
-						@click="copyToClipboard(ns)"
+						variant="ghost"
+						color="neutral"
+						size="sm"
+						trailing-icon="i-clarity-clipboard-line"
+						:aria-label="`Copy nameserver ${ns}`"
+						class="text-comet-600 dark:text-comet-400 font-bold italic"
+						@click="copyToClipboard(ns, 'Nameserver')"
 					>
-						<p class="text-comet-600 dark:text-comet-400 font-bold italic">{{ ns }}</p>
-						<UIcon name="i-clarity-clipboard-line" class="opacity-0 group-hover:opacity-100" />
-					</div>
+						{{ ns }}
+					</UButton>
 				</div>
 			</div>
 			<div class="flex w-full flex-col items-center justify-center gap-4">
@@ -209,13 +195,16 @@
 									"
 								/>
 							</UTooltip>
-							<span
+							<UButton
 								v-if="searchQuery"
-								class="text-comet-500 hover:text-comet-700 absolute top-2 right-2 cursor-pointer"
+								variant="ghost"
+								color="neutral"
+								size="xs"
+								icon="i-heroicons-x-mark-20-solid"
+								aria-label="Clear search"
+								class="absolute top-2 right-2"
 								@click="searchQuery = ''"
-							>
-								<UIcon name="i-heroicons-x-mark-20-solid" class="h-5 w-5" />
-							</span>
+							/>
 						</div>
 					</div>
 					<div class="flex w-full items-center gap-4 md:w-[calc(50%-0.5rem)] md:justify-end">
@@ -297,57 +286,71 @@
 								:name="getRecordTypeIcon(row.original.type)"
 								class="text-comet-500 h-4 w-4 shrink-0"
 							/>
-							<p
-								class="min-w-0 truncate text-xs font-medium group-hover:underline md:text-sm"
+							<span
+								role="button"
+								tabindex="0"
+								:aria-label="`Edit ${row.original._displayName}`"
+								class="min-w-0 cursor-pointer truncate rounded text-xs font-medium group-hover:underline focus-visible:ring-2 md:text-sm"
 								@click="navigateToRecord(row.original.id)"
+								@keydown.enter.prevent="navigateToRecord(row.original.id)"
+								@keydown.space.prevent="navigateToRecord(row.original.id)"
 							>
 								{{ row.original._displayName }}
-							</p>
-							<UTooltip text="Open in new tab">
-								<UButton
-									icon="i-heroicons-arrow-top-right-on-square"
-									variant="ghost"
-									color="neutral"
-									size="xs"
-									@click.stop="openRecordUrl(row.original)"
-								/>
-							</UTooltip>
+							</span>
+							<UButton
+								icon="i-heroicons-arrow-top-right-on-square"
+								variant="ghost"
+								color="neutral"
+								size="xs"
+								aria-label="Open record host in new tab"
+								@click.stop="openRecordUrl(row.original)"
+							/>
 						</div>
 					</template>
 					<template #content-cell="{ row }">
 						<div
-							class="group flex max-w-[120px] items-center gap-4 overflow-hidden sm:max-w-[200px] md:max-w-[280px] lg:max-w-[360px]"
+							class="group flex max-w-[140px] items-center gap-2 overflow-hidden sm:max-w-[200px] md:max-w-[280px] lg:max-w-[360px]"
 						>
-							<p
-								class="truncate text-xs font-medium group-hover:underline md:text-sm"
+							<span
+								role="button"
+								tabindex="0"
+								:aria-label="`Edit record ${row.original._displayName}`"
+								class="min-w-0 cursor-pointer truncate rounded text-xs font-medium group-hover:underline focus-visible:ring-2 md:text-sm"
 								@click="navigateToRecord(row.original.id)"
+								@keydown.enter.prevent="navigateToRecord(row.original.id)"
+								@keydown.space.prevent="navigateToRecord(row.original.id)"
 							>
 								{{ row.original._displayContent }}
-							</p>
+							</span>
+							<UButton
+								icon="i-clarity-clipboard-line"
+								variant="ghost"
+								color="neutral"
+								size="xs"
+								class="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+								:aria-label="`Copy value of ${row.original._displayName}`"
+								@click.stop="copyToClipboard(row.original._displayContent, 'Record value')"
+							/>
 							<div v-if="row.original.proxiable" @click.stop>
 								<USwitch
 									v-model="row.original.proxied"
 									color="warning"
+									:disabled="proxyPending.has(row.original.id)"
+									:aria-label="`Toggle Cloudflare proxy for ${row.original._displayName}`"
 									@update:model-value="() => updateProxyStatus(row.original)"
 								/>
 							</div>
 						</div>
 					</template>
 					<template #created_on-cell="{ row }">
-						<div
-							v-if="isLargeScreen"
-							class="flex max-w-[200px] items-center gap-4 truncate overflow-hidden text-xs md:text-sm"
-						>
-							<p class="truncate">{{ dayjs(row.original.created_on).format('DD/MM/YYYY') }}</p>
-						</div>
+						<p class="truncate text-xs md:text-sm">
+							{{ row.original.created_on ? dayjs(row.original.created_on).format('DD MMM YYYY') : '—' }}
+						</p>
 					</template>
 					<template #modified_on-cell="{ row }">
-						<div
-							v-if="isLargeScreen"
-							class="flex max-w-[200px] items-center gap-4 truncate overflow-hidden text-xs md:text-sm"
-						>
-							<p class="truncate">{{ dayjs(row.original.modified_on).format('DD/MM/YYYY') }}</p>
-						</div>
+						<p class="truncate text-xs md:text-sm">
+							{{ row.original.modified_on ? dayjs(row.original.modified_on).format('DD MMM YYYY') : '—' }}
+						</p>
 					</template>
 					<template #actions-cell="{ row }">
 						<UDropdownMenu :items="items(row.original)">
@@ -355,9 +358,40 @@
 								color="neutral"
 								variant="ghost"
 								icon="i-heroicons-ellipsis-horizontal-20-solid"
+								aria-label="Record actions"
 								@click.stop
 							/>
 						</UDropdownMenu>
+					</template>
+					<template #empty>
+						<div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
+							<UIcon name="i-clarity-list-line" class="text-comet-400 h-8 w-8" />
+							<p class="text-comet-600 dark:text-comet-300 text-sm">
+								{{
+									hasActiveFilters
+										? 'No records match your filters.'
+										: 'This zone has no DNS records yet.'
+								}}
+							</p>
+							<UButton
+								v-if="hasActiveFilters"
+								variant="outline"
+								color="neutral"
+								icon="i-heroicons-x-mark-20-solid"
+								@click="clearFilters"
+							>
+								Clear filters
+							</UButton>
+							<UButton
+								v-else
+								variant="outline"
+								color="success"
+								icon="i-clarity-plus-circle-solid"
+								@click="navigateToCreate"
+							>
+								Create Record
+							</UButton>
+						</div>
 					</template>
 				</UTable>
 				<div class="flex w-full justify-end">
@@ -412,6 +446,51 @@
 						</div>
 					</template>
 				</UModal>
+
+				<UModal v-model:open="importModalOpen">
+					<template #title>
+						<div class="flex items-center gap-2">
+							<UIcon name="i-heroicons-arrow-up-tray" class="h-5 w-5" />
+							<span>Import BIND zone file</span>
+						</div>
+					</template>
+					<template #description>
+						<p class="text-comet-600 dark:text-comet-300 text-sm">
+							Paste or upload a BIND zone file. Records are added to
+							<span class="font-semibold">{{ zoneName || 'this zone' }}</span> via Cloudflare's importer.
+						</p>
+					</template>
+					<template #body>
+						<div class="space-y-3">
+							<input
+								type="file"
+								accept=".txt,.zone,text/plain"
+								aria-label="Upload BIND zone file"
+								class="text-comet-600 dark:text-comet-300 block w-full text-sm"
+								@change="onImportFile"
+							/>
+							<UTextarea
+								v-model="importText"
+								:rows="10"
+								placeholder="$ORIGIN example.com.&#10;www 1 IN A 192.0.2.1"
+								class="w-full font-mono text-xs"
+							/>
+						</div>
+					</template>
+					<template #footer>
+						<div class="flex justify-end gap-3">
+							<UButton color="neutral" variant="ghost" @click="importModalOpen = false">Cancel</UButton>
+							<UButton
+								color="success"
+								:loading="importLoading"
+								:disabled="!importText.trim()"
+								@click="importZone"
+							>
+								Import records
+							</UButton>
+						</div>
+					</template>
+				</UModal>
 			</div>
 		</div>
 	</PageContainer>
@@ -424,6 +503,8 @@ import { useDebounceFn } from '@vueuse/core'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const { getApiKey } = useSession()
+const { getRecordTypeColor, getRecordTypeIcon, formatContent } = useRecordTypes()
 const zoneId = computed(() => route.params.zone_id)
 const apiKey = ref('')
 const zoneName = ref('')
@@ -446,6 +527,11 @@ const deleteModalOpen = ref(false)
 const deleteTargets = ref([])
 const deleteLoading = ref(false)
 const selectedStatus = ref([])
+const proxyPending = ref(new Set())
+const exportLoading = ref(false)
+const importModalOpen = ref(false)
+const importText = ref('')
+const importLoading = ref(false)
 const windowSize = useWindowSize()
 const isLargeScreen = computed(() => windowSize.width.value >= 768)
 const botFightMode = ref(false)
@@ -506,6 +592,28 @@ const canDnsFirewall = computed(() =>
 const canAccountAnalytics = computed(() =>
 	Boolean(capabilities.value && capabilities.value.accountAnalytics && capabilities.value.accountAnalytics.available)
 )
+const moreNavItems = computed(() => {
+	const items = []
+	if (canRulesets.value)
+		items.push({ label: 'Rules', icon: 'i-heroicons-shield-check', to: `/zones/${zoneId.value}/rules` })
+	if (canAccountAnalytics.value)
+		items.push({ label: 'Analytics', icon: 'i-heroicons-chart-bar', to: `/zones/${zoneId.value}/analytics` })
+	if (canTurnstile.value)
+		items.push({
+			label: 'Turnstile',
+			icon: 'i-heroicons-shield-exclamation',
+			to: `/zones/${zoneId.value}/turnstile`
+		})
+	if (canDnsViews.value)
+		items.push({ label: 'DNS Views', icon: 'i-heroicons-squares-plus', to: `/zones/${zoneId.value}/dns-views` })
+	if (canDnsFirewall.value)
+		items.push({
+			label: 'DNS Firewall',
+			icon: 'i-heroicons-shield-check',
+			to: `/zones/${zoneId.value}/dns-firewall`
+		})
+	return items.length ? [items] : []
+})
 const getRecordsCacheKey = () => `${apiKey.value}:${zoneId.value}`
 const getRecordsUpdatedKey = () => `cf-records-updated-${zoneId.value}`
 const readRecordsCache = () => {
@@ -529,41 +637,63 @@ useDynamicSeo({
 })
 
 const updateProxyStatus = async (record) => {
-	const response = await fetch('/api/update_record', {
-		method: 'POST',
-		body: JSON.stringify({
-			apiKey: apiKey.value,
-			currZone: zoneId.value,
-			currDnsRecord: record.id,
-			dns: { ...record, proxied: record.proxied ? true : false }
+	// v-model has already flipped record.proxied to the desired value; remember the
+	// prior state so we can roll back if Cloudflare rejects the change.
+	const previous = !record.proxied
+	const pending = new Set(proxyPending.value)
+	pending.add(record.id)
+	proxyPending.value = pending
+
+	const stopPending = () => {
+		const next = new Set(proxyPending.value)
+		next.delete(record.id)
+		proxyPending.value = next
+	}
+
+	try {
+		const data = await $fetch('/api/update_record', {
+			method: 'POST',
+			body: {
+				apiKey: apiKey.value,
+				currZone: zoneId.value,
+				currDnsRecord: record.id,
+				dns: { ...record, proxied: record.proxied === true }
+			}
 		})
-	})
-	if (response.ok) {
-		const data = await response.json()
-		if (data.success) {
+		if (data?.success) {
 			toast.add({
 				id: 'update-proxy-success' + Date.now(),
-				title: 'Update success',
-				description: 'Proxy status updated successfully',
+				title: 'Proxy updated',
+				description: `Proxy ${record.proxied ? 'enabled' : 'disabled'} for ${record._displayName || record.name}`,
 				icon: 'i-clarity-check-circle-solid',
 				duration: 3000,
 				color: 'success'
 			})
 			markRecordsUpdated()
 			await getDns({ force: true })
-		} else {
-			console.error(data.errors[0].message)
-			toast.add({
-				id: 'update-proxy-error' + Date.now(),
-				title: 'Update failed',
-				description: data.errors[0].message,
-				icon: 'i-clarity-warning-solid',
-				duration: 3000,
-				color: 'error'
-			})
+			return
 		}
-	} else {
-		console.error('HTTP-Error: ' + response.status)
+		record.proxied = previous
+		toast.add({
+			id: 'update-proxy-error' + Date.now(),
+			title: 'Update failed',
+			description: data?.errors?.[0]?.message || 'Failed to update proxy status',
+			icon: 'i-clarity-warning-solid',
+			duration: 4000,
+			color: 'error'
+		})
+	} catch (error) {
+		record.proxied = previous
+		toast.add({
+			id: 'update-proxy-error' + Date.now(),
+			title: 'Update failed',
+			description: error?.data?.statusMessage || error?.message || 'Failed to update proxy status',
+			icon: 'i-clarity-warning-solid',
+			duration: 4000,
+			color: 'error'
+		})
+	} finally {
+		stopPending()
 	}
 }
 
@@ -792,6 +922,11 @@ const items = (row) => {
 				onClick: () => navigateToRecord(row.id)
 			},
 			{
+				label: 'Copy value',
+				icon: 'i-clarity-clipboard-line',
+				onClick: () => copyToClipboard(formatContent(row), 'Record value')
+			},
+			{
 				label: 'Open',
 				icon: 'i-heroicons-arrow-top-right-on-square',
 				onClick: () => openRecordUrl(row)
@@ -823,8 +958,9 @@ const formatDisplayName = (record) => {
 	const name = record.name
 	if (!name) return ''
 
-	if (name === zoneName.value || !name.endsWith(zoneName.value)) {
-		return name
+	// Apex record, or a name that isn't actually a subdomain of the zone.
+	if (name === zoneName.value || !name.endsWith(`.${zoneName.value}`)) {
+		return name === zoneName.value ? '@' : name
 	}
 
 	// Remove zone name and the preceding dot
@@ -863,6 +999,7 @@ const filteredRecords = computed(() => {
 	return records
 })
 
+const hasActiveFilters = computed(() => Boolean(searchQuery.value || selectedStatus.value.length))
 const totalRecords = computed(() => (dnsRecords.value || []).length)
 const filteredCount = computed(() => (filteredRecords.value || []).length)
 const proxiedCount = computed(() => (dnsRecords.value || []).filter((r) => r && r.proxied === true).length)
@@ -970,11 +1107,11 @@ watch(filteredRecords, () => {
 
 // Initialize from URL params
 onMounted(async () => {
-	apiKey.value = (localStorage.getItem('cf-api-key') || '').trim()
-	if (!apiKey.value) {
-		router.push('/login')
-		return
-	}
+	apiKey.value = getApiKey()
+	if (!apiKey.value) return
+
+	// On small screens hide the date columns by default to reduce horizontal crowding.
+	if (!isLargeScreen.value) columnVisibility.value = { created_on: false, modified_on: false }
 
 	// Check if we have types in the URL
 	if (route.query.types) {
@@ -1212,64 +1349,120 @@ const openRecordUrl = (record) => {
 	window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-const copyToClipboard = (text) => {
-	navigator.clipboard.writeText(text)
-	toast.add({
-		id: 'copy-ns' + Date.now(),
-		title: 'Copied to clipboard',
-		description: 'Nameserver copied to clipboard',
-		icon: 'i-clarity-check-circle-solid',
-		duration: 3000,
-		color: 'success'
-	})
+const copyToClipboard = async (text, label = 'Value') => {
+	if (!text) return
+	try {
+		await navigator.clipboard.writeText(text)
+		toast.add({
+			id: 'copy-clip' + Date.now(),
+			title: 'Copied',
+			description: `${label} copied to clipboard`,
+			icon: 'i-clarity-check-circle-solid',
+			duration: 2000,
+			color: 'success'
+		})
+	} catch {
+		toast.add({
+			id: 'copy-clip-error' + Date.now(),
+			title: 'Copy failed',
+			description: 'Clipboard is unavailable in this browser',
+			icon: 'i-clarity-warning-solid',
+			duration: 3000,
+			color: 'error'
+		})
+	}
 }
 
-// Utility function to format content based on record type
-const formatContent = (record) => {
-	if (record.type === 'SRV' && record.data) {
-		// For Minecraft SRV records, use a special format
-		if (record.name && record.name.includes('_minecraft._tcp')) {
-			// Extract just what follows after _minecraft._tcp.
-			const domainPart = record.name.split('_minecraft._tcp.')[1]
-			if (domainPart) {
-				return `${domainPart} → ${record.data.target}:${record.data.port}`
-			}
+const exportZone = async () => {
+	exportLoading.value = true
+	try {
+		const data = await $fetch('/api/export_zone', {
+			method: 'POST',
+			body: { apiKey: apiKey.value, currZone: zoneId.value }
+		})
+		const zoneFile = data?.result?.zoneFile
+		if (!zoneFile) throw new Error('Empty export')
+		const blob = new Blob([zoneFile], { type: 'text/plain' })
+		const url = URL.createObjectURL(blob)
+		const link = document.createElement('a')
+		link.href = url
+		link.download = `${zoneName.value || 'zone'}.zone`
+		document.body.appendChild(link)
+		link.click()
+		link.remove()
+		URL.revokeObjectURL(url)
+		toast.add({
+			id: 'export-zone-success' + Date.now(),
+			title: 'Zone exported',
+			description: `Downloaded ${zoneName.value || 'zone'}.zone`,
+			icon: 'i-clarity-check-circle-solid',
+			duration: 3000,
+			color: 'success'
+		})
+	} catch (error) {
+		toast.add({
+			id: 'export-zone-error' + Date.now(),
+			title: 'Export failed',
+			description: error?.data?.statusMessage || error?.message || 'Failed to export zone',
+			icon: 'i-clarity-warning-solid',
+			duration: 4000,
+			color: 'error'
+		})
+	} finally {
+		exportLoading.value = false
+	}
+}
+
+const onImportFile = async (event) => {
+	const file = event?.target?.files?.[0]
+	if (!file) return
+	importText.value = await file.text()
+}
+
+const importZone = async () => {
+	if (!importText.value.trim()) return
+	importLoading.value = true
+	try {
+		const data = await $fetch('/api/import_zone', {
+			method: 'POST',
+			body: { apiKey: apiKey.value, currZone: zoneId.value, zoneFile: importText.value }
+		})
+		if (data?.success) {
+			const recs = data?.result?.recs_added ?? data?.result?.total_records_parsed ?? ''
+			toast.add({
+				id: 'import-zone-success' + Date.now(),
+				title: 'Zone imported',
+				description: recs ? `${recs} records processed` : 'Records imported successfully',
+				icon: 'i-clarity-check-circle-solid',
+				duration: 3500,
+				color: 'success'
+			})
+			importModalOpen.value = false
+			importText.value = ''
+			markRecordsUpdated()
+			await getDns({ force: true })
+		} else {
+			toast.add({
+				id: 'import-zone-error' + Date.now(),
+				title: 'Import failed',
+				description: data?.errors?.[0]?.message || 'Cloudflare rejected the import',
+				icon: 'i-clarity-warning-solid',
+				duration: 5000,
+				color: 'error'
+			})
 		}
-
-		// Make sure we have all the required fields before showing them
-		if (record.data.target && record.data.port) {
-			return `➡️ ${record.data.target}:${record.data.port}${record.data.weight ? ` (Weight: ${record.data.weight})` : ''}`
-		}
+	} catch (error) {
+		toast.add({
+			id: 'import-zone-error' + Date.now(),
+			title: 'Import failed',
+			description: error?.data?.statusMessage || error?.message || 'Failed to import zone',
+			icon: 'i-clarity-warning-solid',
+			duration: 5000,
+			color: 'error'
+		})
+	} finally {
+		importLoading.value = false
 	}
-
-	// For all other record types or if SRV is missing data
-	return record.content || ''
-}
-
-// Get color for record type badge
-const getRecordTypeColor = (type) => {
-	const colorMap = {
-		A: 'primary',
-		AAAA: 'secondary',
-		CNAME: 'success',
-		MX: 'info',
-		SRV: 'warning',
-		TXT: 'neutral'
-	}
-	return colorMap[type] || 'neutral'
-}
-
-// Get icon for record types
-const getRecordTypeIcon = (type) => {
-	const iconMap = {
-		A: 'mdi:alpha-a-circle',
-		AAAA: 'mdi:alpha-a-circle',
-		CNAME: 'mdi:alpha-c-circle',
-		MX: 'mdi:email',
-		SRV: 'mdi:server',
-		TXT: 'mdi:text-box'
-	}
-	return iconMap[type] || 'mdi:dns'
 }
 
 // Format SRV record name for display

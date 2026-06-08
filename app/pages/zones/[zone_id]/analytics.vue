@@ -57,10 +57,10 @@
 
 <script setup>
 const route = useRoute()
-const router = useRouter()
+const { getApiKey } = useSession()
 
 const apiKey = ref('')
-const zoneName = ref(localStorage.getItem('cf-zone-name') || '')
+const zoneName = ref('')
 const zoneId = computed(() => route.params.zone_id)
 
 const capabilities = ref(null)
@@ -123,11 +123,9 @@ const runQuery = async () => {
 }
 
 onMounted(async () => {
-	apiKey.value = localStorage.getItem('cf-api-key')
-	if (!apiKey.value) {
-		router.push('/login')
-		return
-	}
+	apiKey.value = getApiKey()
+	if (!apiKey.value) return
+	zoneName.value = localStorage.getItem(STORAGE_KEYS.zoneName) || ''
 	await loadCaps()
 })
 </script>

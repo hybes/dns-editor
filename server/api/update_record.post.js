@@ -32,12 +32,23 @@ export default defineEventHandler(async (event) => {
 				throw createError({ statusCode: 400, statusMessage: 'Missing SRV data' })
 			}
 
-			bodyToSend.data = body.dns.data
+			const withUnderscore = (value) => {
+				const str = String(value)
+				return str.startsWith('_') ? str : `_${str}`
+			}
+			bodyToSend.data = { ...body.dns.data }
+			if (body.dns.data.service) bodyToSend.data.service = withUnderscore(body.dns.data.service)
+			if (body.dns.data.proto) bodyToSend.data.proto = withUnderscore(body.dns.data.proto)
 			bodyToSend.name = body.dns.name
 
-			if (body.dns.data.port) bodyToSend.data.port = Number(body.dns.data.port)
-			if (body.dns.data.priority) bodyToSend.data.priority = Number(body.dns.data.priority)
-			if (body.dns.data.weight) bodyToSend.data.weight = Number(body.dns.data.weight)
+			const toNumber = (value) =>
+				value === undefined || value === null || value === '' ? undefined : Number(value)
+			const port = toNumber(body.dns.data.port)
+			const priority = toNumber(body.dns.data.priority)
+			const weight = toNumber(body.dns.data.weight)
+			if (port !== undefined) bodyToSend.data.port = port
+			if (priority !== undefined) bodyToSend.data.priority = priority
+			if (weight !== undefined) bodyToSend.data.weight = weight
 
 			if (body.dns.priority !== undefined) {
 				bodyToSend.priority = Number(body.dns.priority) || 0

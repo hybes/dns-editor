@@ -30,7 +30,7 @@ export default defineNuxtConfig({
 		indexable: false
 	},
 
-	modules: ['@nuxtjs/device', '@nuxt/image', '@nuxt/ui', '@nuxt/icon', '@nuxt/eslint', '@nuxt/fonts', '@nuxtjs/seo'],
+	modules: ['@nuxt/ui', '@nuxt/icon', '@nuxt/eslint', '@nuxt/fonts', '@nuxtjs/seo'],
 
 	seo: {
 		meta: {
