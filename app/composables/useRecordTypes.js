@@ -13,14 +13,14 @@ const TYPE_COLORS = {
 }
 
 const TYPE_ICONS = {
-	A: 'mdi:alpha-a-circle',
-	AAAA: 'mdi:alpha-a-circle',
-	CNAME: 'mdi:alpha-c-circle',
-	MX: 'mdi:email',
-	NS: 'mdi:dns',
-	SRV: 'mdi:server',
-	TXT: 'mdi:text-box',
-	CAA: 'mdi:certificate'
+	A: 'heroicons:map-pin',
+	AAAA: 'heroicons:map-pin',
+	CNAME: 'heroicons:link',
+	MX: 'heroicons:envelope',
+	NS: 'heroicons:globe-alt',
+	SRV: 'heroicons:server-stack',
+	TXT: 'heroicons:document-text',
+	CAA: 'heroicons:shield-check'
 }
 
 const TYPE_DESCRIPTIONS = {
@@ -50,7 +50,7 @@ export const CREATABLE_RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'SRV', 
 
 export function useRecordTypes() {
 	const getRecordTypeColor = (type) => TYPE_COLORS[type] || 'neutral'
-	const getRecordTypeIcon = (type) => TYPE_ICONS[type] || 'mdi:dns'
+	const getRecordTypeIcon = (type) => TYPE_ICONS[type] || 'heroicons:circle-stack'
 	const getDnsTypeDescription = (type) => TYPE_DESCRIPTIONS[type] || `${type} Record`
 	const getDnsTypeHelp = (type) => TYPE_HELP[type] || 'Configure your DNS record settings below.'
 

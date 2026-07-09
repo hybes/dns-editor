@@ -15,56 +15,54 @@
 	--ui-color-neutral-800: var(--color-comet-800);
 	--ui-color-neutral-900: var(--color-comet-900);
 	--ui-color-neutral-950: var(--color-comet-950);
-	--ui-bg: white;
+	--ui-bg: #fbfcfd;
 	--ui-bg-muted: var(--ui-color-neutral-50);
-	--ui-bg-elevated: var(--ui-color-neutral-100);
-	--ui-bg-accented: var(--ui-color-neutral-200);
+	--ui-bg-elevated: white;
+	--ui-bg-accented: var(--ui-color-neutral-100);
 	--ui-bg-inverted: var(--ui-color-neutral-900);
+	--app-header-bg: color-mix(in oklab, white 84%, transparent);
 }
 
 .dark {
-	--ui-bg: var(--ui-color-neutral-950);
-	--ui-bg-muted: var(--ui-color-neutral-950);
+	--ui-bg: #10141a;
+	--ui-bg-muted: #151a22;
 	--ui-bg-elevated: var(--ui-color-neutral-900);
 	--ui-bg-accented: var(--ui-color-neutral-800);
 	--ui-bg-inverted: white;
+	--app-header-bg: color-mix(in oklab, #10141a 86%, transparent);
 
-	--ui-border: var(--ui-color-neutral-800);
-	--ui-border-muted: var(--ui-color-neutral-900);
-	--ui-border-accented: var(--ui-color-neutral-800);
+	--ui-border: var(--ui-color-neutral-700);
+	--ui-border-muted: var(--ui-color-neutral-800);
+	--ui-border-accented: var(--ui-color-neutral-600);
 
-	--ui-text-dimmed: var(--ui-color-neutral-500);
-	--ui-text-muted: var(--ui-color-neutral-400);
-	--ui-text-toned: var(--ui-color-neutral-300);
-	--ui-text: var(--ui-color-neutral-200);
+	--ui-text-dimmed: var(--ui-color-neutral-400);
+	--ui-text-muted: var(--ui-color-neutral-300);
+	--ui-text-toned: var(--ui-color-neutral-200);
+	--ui-text: var(--ui-color-neutral-100);
 	--ui-text-highlighted: white;
 	--ui-text-inverted: var(--ui-color-neutral-950);
 }
 
 @theme static {
-	--color-comet-50: #f7f7f8;
-	--color-comet-100: #eeeff1;
-	--color-comet-200: #d5d8dd;
-	--color-comet-300: #bcc0c8;
-	--color-comet-400: #8a919f;
-	--color-comet-500: #586276;
-	--color-comet-600: #4f586a;
-	--color-comet-700: #424a59;
-	--color-comet-800: #353b47;
-	--color-comet-900: #2b303a;
-	--color-comet-950: #1f242c;
-
-	--color-main: #2c323c;
-	--color-primary: #f48120;
-	--color-secondary: #424a59;
-	--color-accent: #f48120;
+	--color-comet-50: #f7f8fa;
+	--color-comet-100: #eef1f4;
+	--color-comet-200: #dce1e7;
+	--color-comet-300: #c1c8d2;
+	--color-comet-400: #9099a8;
+	--color-comet-500: #687386;
+	--color-comet-600: #505b6d;
+	--color-comet-700: #3d4655;
+	--color-comet-800: #29313c;
+	--color-comet-900: #1b212a;
+	--color-comet-950: #10141a;
 
 	--breakpoint-xs: 375px;
 	--breakpoint-full: 2160px;
 	--breakpoint-8xl: 90rem;
 
-	--font-sans: 'Satoshi', sans-serif;
+	--font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
+
 @layer base {
 	*,
 	::after,
@@ -73,25 +71,43 @@
 	::file-selector-button {
 		border-color: var(--color-comet-200, currentcolor);
 	}
-}
 
-input,
-textarea,
-select {
-	@apply border-default bg-elevated text-default border;
-}
+	html {
+		@apply overflow-x-hidden;
+		min-width: 320px;
+		scrollbar-gutter: stable;
+	}
 
-html {
-	@apply overflow-x-hidden;
-	scrollbar-gutter: stable;
+	body {
+		min-height: 100dvh;
+		text-rendering: optimizeLegibility;
+	}
+
+	button,
+	a,
+	input,
+	select,
+	textarea {
+		touch-action: manipulation;
+	}
+
+	input,
+	textarea,
+	select {
+		@apply border-default bg-elevated text-default border;
+	}
+
+	::selection {
+		background: color-mix(in oklab, var(--ui-primary) 28%, transparent);
+	}
 }
 
 /* Subtle ambient accent so pages have depth instead of a flat fill. */
 body {
 	background-color: var(--ui-bg);
 	background-image: radial-gradient(
-		55rem 38rem at 50% -12rem,
-		color-mix(in oklab, var(--color-primary) 7%, transparent),
+		60rem 42rem at 50% -14rem,
+		color-mix(in oklab, var(--ui-primary) 10%, transparent),
 		transparent 70%
 	);
 	background-repeat: no-repeat;
@@ -100,7 +116,7 @@ body {
 
 @layer components {
 	.page {
-		@apply min-h-screen w-full;
+		@apply min-h-dvh w-full;
 	}
 
 	.page-inner {
@@ -112,8 +128,31 @@ body {
 		@apply mb-6 flex flex-wrap items-center justify-between gap-4;
 	}
 
+	.surface-panel {
+		@apply border-default bg-default rounded-xl border shadow-sm;
+	}
+
+	.skip-link {
+		@apply bg-default text-highlighted ring-primary fixed top-3 left-3 z-[100] -translate-y-20 rounded-lg px-4 py-2 text-sm font-semibold shadow-lg ring-2 transition-transform focus-visible:translate-y-0;
+	}
+
 	.clickable {
 		@apply cursor-pointer;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
 	}
 }
 

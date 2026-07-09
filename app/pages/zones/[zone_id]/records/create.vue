@@ -1,22 +1,18 @@
 <template>
-	<PageContainer>
-		<div class="mb-2 flex items-center justify-start">
-			<UButton variant="outline" icon="i-clarity-undo-line" @click="goBack">Back</UButton>
+	<Loader
+		v-if="loading && !appBootLoading"
+		fullscreen
+		title="Preparing record creation"
+		subtitle="Fetching zone details from Cloudflare…"
+	/>
+	<PageContainer v-else>
+		<div class="mb-6 flex items-center justify-start">
+			<UButton variant="ghost" color="neutral" icon="i-clarity-undo-line" :to="backDestination">
+				Back to Records
+			</UButton>
 		</div>
 
-		<Loader
-			v-if="loading && !appBootLoading"
-			fullscreen
-			title="Preparing record creation"
-			subtitle="Fetching zone details from Cloudflare…"
-		/>
-		<DnsRecordForm
-			v-else
-			mode="create"
-			:zone-name="zone.name || zoneId"
-			:submitting="submitting"
-			@submit="createRecord"
-		/>
+		<DnsRecordForm mode="create" :zone-name="zone.name || zoneId" :submitting="submitting" @submit="createRecord" />
 	</PageContainer>
 </template>
 
@@ -28,6 +24,17 @@ const toast = useToast()
 const { getApiKey } = useSession()
 
 const zoneId = computed(() => route.params.zone_id)
+const backDestination = computed(() => {
+	if (!route.query.return) return `/zones/${zoneId.value}/records`
+	try {
+		return {
+			path: `/zones/${zoneId.value}/records`,
+			query: JSON.parse(decodeURIComponent(route.query.return))
+		}
+	} catch {
+		return `/zones/${zoneId.value}/records`
+	}
+})
 const apiKey = ref('')
 const zone = ref({})
 const loading = ref(true)
@@ -129,19 +136,6 @@ const createRecord = async (form) => {
 	} finally {
 		submitting.value = false
 	}
-}
-
-const goBack = () => {
-	if (route.query.return) {
-		try {
-			const returnQuery = JSON.parse(decodeURIComponent(route.query.return))
-			router.push({ path: `/zones/${zoneId.value}/records`, query: returnQuery })
-			return
-		} catch {
-			// fall through
-		}
-	}
-	router.push(`/zones/${zoneId.value}/records`)
 }
 
 onMounted(() => {

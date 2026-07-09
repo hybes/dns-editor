@@ -122,8 +122,18 @@ export function useSrvRecord() {
 		}
 	}
 
-	const isValid = () =>
-		Boolean(srvData.value.service && srvData.value.proto && srvData.value.name && srvData.value.target)
+	const isValid = () => {
+		const port = Number(srvData.value.port)
+		const hasValidPort =
+			srvData.value.port !== '' &&
+			srvData.value.port !== null &&
+			Number.isInteger(port) &&
+			port >= 0 &&
+			port <= 65535
+		return Boolean(
+			srvData.value.service && srvData.value.proto && srvData.value.name && srvData.value.target && hasValidPort
+		)
+	}
 
 	return {
 		srvData,

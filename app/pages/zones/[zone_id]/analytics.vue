@@ -47,8 +47,7 @@
 					<pre
 						v-if="result"
 						class="max-h-[520px] overflow-auto rounded-lg bg-stone-100 p-4 text-xs dark:bg-stone-950"
-						>{{ result }}</pre
-					>
+						>{{ result }}</pre>
 				</div>
 			</div>
 		</div>

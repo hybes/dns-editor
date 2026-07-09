@@ -1,223 +1,223 @@
 <template>
 	<PageContainer>
-		<div class="mb-6 flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
-			<div class="flex flex-wrap items-center justify-center gap-3">
-				<UButton variant="outline" icon="i-clarity-undo-line" to="/zones">Back to Zones</UButton>
-				<UButton variant="outline" color="success" icon="i-clarity-plus-circle-solid" @click="navigateToCreate">
-					Create Record
-				</UButton>
-				<AiDnsEditorModal
-					:api-key="apiKey"
-					:zone-id="zoneId"
-					:zone-name="zoneName"
-					@applied="handleAiApplied"
-				/>
-				<UButton
-					variant="outline"
-					color="neutral"
-					icon="i-heroicons-arrow-down-tray"
-					:loading="exportLoading"
-					@click="exportZone"
+		<section aria-labelledby="records-title" class="flex flex-col gap-6">
+			<UButton to="/zones" variant="ghost" color="neutral" icon="i-clarity-undo-line" class="self-start">
+				Back to Zones
+			</UButton>
+
+			<header class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+				<div class="min-w-0">
+					<p class="text-primary text-xs font-semibold tracking-wide uppercase">DNS Zone</p>
+					<div class="mt-1 flex min-w-0 items-center gap-2">
+						<h1
+							id="records-title"
+							class="text-highlighted truncate text-2xl font-semibold tracking-tight sm:text-3xl"
+						>
+							{{ zoneName || 'DNS Records' }}
+						</h1>
+						<UButton
+							v-if="zoneName"
+							:to="`https://${zoneName}`"
+							external
+							target="_blank"
+							rel="noopener noreferrer"
+							variant="ghost"
+							color="neutral"
+							size="xs"
+							icon="i-heroicons-arrow-top-right-on-square"
+							:aria-label="`Open ${zoneName} in a new tab`"
+						/>
+					</div>
+					<p class="text-muted mt-2 text-sm">
+						Search, edit, import, and protect this zone’s DNS configuration.
+					</p>
+				</div>
+
+				<div class="flex flex-wrap items-center gap-2">
+					<UButton color="primary" icon="i-clarity-plus-circle-solid" @click="navigateToCreate">
+						Create Record
+					</UButton>
+					<AiDnsEditorModal
+						:api-key="apiKey"
+						:zone-id="zoneId"
+						:zone-name="zoneName"
+						@applied="handleAiApplied"
+					/>
+					<UDropdownMenu :items="moreNavItems" :content="{ align: 'end' }">
+						<UButton
+							variant="outline"
+							color="neutral"
+							icon="i-heroicons-squares-2x2"
+							trailing-icon="i-heroicons-chevron-down-20-solid"
+						>
+							More Actions
+						</UButton>
+					</UDropdownMenu>
+				</div>
+			</header>
+
+			<div class="flex flex-wrap items-center gap-3">
+				<CapabilityIndicator :missing-items="capabilityMissing" />
+				<UTooltip
+					v-if="canBotFight"
+					:text="
+						botUnavailable
+							? botUnavailableReason || 'Bot Fight Mode is unavailable'
+							: 'Toggle Bot Fight Mode'
+					"
 				>
-					Export
-				</UButton>
-				<UButton
-					variant="outline"
-					color="neutral"
-					icon="i-heroicons-arrow-up-tray"
-					@click="importModalOpen = true"
-				>
-					Import
-				</UButton>
-				<UDropdownMenu v-if="moreNavItems.length" :items="moreNavItems" :content="{ align: 'end' }">
+					<div
+						class="border-default bg-default flex items-center gap-3 rounded-lg border px-3 py-2 shadow-xs"
+					>
+						<UIcon name="i-heroicons-bug-ant" class="text-muted h-5 w-5" aria-hidden="true" />
+						<span class="text-highlighted text-sm font-medium">Bot Fight Mode</span>
+						<UBadge v-if="botUnavailable" color="neutral" variant="subtle">Unavailable</UBadge>
+						<UBadge v-else :color="botFightMode ? 'success' : 'neutral'" variant="subtle">
+							{{ botFightMode ? 'On' : 'Off' }}
+						</UBadge>
+						<UIcon
+							v-if="botLoading"
+							name="i-heroicons-arrow-path"
+							class="text-muted h-4 w-4 animate-spin motion-reduce:animate-none"
+							aria-hidden="true"
+						/>
+						<USwitch
+							:model-value="botFightMode"
+							:disabled="botLoading || botUnavailable"
+							aria-label="Toggle Bot Fight Mode"
+							@update:model-value="updateBotFightMode"
+						/>
+					</div>
+				</UTooltip>
+
+				<UDropdownMenu v-if="canSsl" :items="sslMenuItems" :content="{ align: 'start' }">
 					<UButton
 						variant="outline"
-						color="primary"
-						icon="i-heroicons-squares-2x2"
+						color="neutral"
+						icon="i-clarity-lock-line"
 						trailing-icon="i-heroicons-chevron-down-20-solid"
+						:loading="sslUpdating"
 					>
-						More
+						SSL: {{ sslLabel }}
 					</UButton>
 				</UDropdownMenu>
-				<UBadge v-if="searchQuery || selectedStatus.length > 0" color="primary" class="flex items-center gap-2">
-					<span v-if="searchQuery">Search: {{ searchQuery }}</span>
-					<span v-if="selectedStatus.length > 0">Types: {{ selectedStatus.join(', ') }}</span>
-					<UIcon name="i-heroicons-x-mark" class="h-4 w-4 cursor-pointer" @click="clearFilters" />
-				</UBadge>
 			</div>
-		</div>
-		<div class="flex flex-col items-center justify-center gap-4">
-			<div class="flex w-full flex-col justify-center gap-4">
-				<div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
-					<NuxtLink
-						:to="'http://' + zoneName"
-						external
-						target="_blank"
-						class="text-comet-900 dark:text-comet-100 text-center text-2xl font-semibold hover:underline"
-					>
-						{{ zoneName }}
-					</NuxtLink>
-					<CapabilityIndicator :missing-items="capabilityMissing" />
-					<UTooltip
-						:text="
-							botUnavailable
-								? botUnavailableReason || 'Bot Fight Mode is unavailable for this zone/token'
-								: 'Toggle Bot Fight Mode'
-						"
-					>
-						<div
-							v-if="canBotFight"
-							class="border-comet-300 dark:border-comet-700 dark:bg-comet-900/40 flex items-center gap-3 rounded-full border bg-white/70 px-3 py-1.5 shadow-xs backdrop-blur-sm"
-						>
-							<div class="flex items-center gap-2">
-								<UIcon name="i-heroicons-bug-ant" class="text-comet-700 dark:text-comet-200 h-5 w-5" />
-								<span class="text-comet-800 dark:text-comet-100 text-sm font-medium"
-									>Bot Fight Mode</span
-								>
-							</div>
-							<div class="flex items-center gap-2">
-								<UBadge v-if="botUnavailable" color="neutral" variant="subtle"> Unavailable </UBadge>
-								<UBadge v-else :color="botFightMode ? 'success' : 'warning'" variant="subtle">
-									{{ botFightMode ? 'On' : 'Off' }}
-								</UBadge>
-								<UIcon
-									v-if="botLoading"
-									name="i-heroicons-arrow-path"
-									class="text-comet-500 h-4 w-4 animate-spin"
-								/>
-								<USwitch
-									:model-value="botFightMode"
-									:disabled="botLoading || botUnavailable"
-									@update:model-value="updateBotFightMode"
-								/>
-							</div>
-						</div>
-					</UTooltip>
-					<div v-if="canSsl" class="relative">
-						<UDropdownMenu :items="sslMenuItems" :content="{ align: 'end' }">
-							<UButton variant="ghost" color="neutral" size="sm" class="p-1" aria-label="Change SSL mode">
-								<UIcon
-									v-if="zone.ssl?.value === 'strict'"
-									name="i-clarity-lock-solid"
-									class="h-6 w-6"
-								/>
-								<UIcon v-if="zone.ssl?.value === 'full'" name="i-clarity-lock-line" class="h-6 w-6" />
-								<UIcon
-									v-if="zone.ssl?.value === 'flexible'"
-									name="i-clarity-curve-chart-solid"
-									class="h-6 w-6"
-								/>
-								<UIcon
-									v-if="zone.ssl?.value === 'off'"
-									name="i-clarity-no-access-solid"
-									class="h-6 w-6"
-								/>
-							</UButton>
-						</UDropdownMenu>
-					</div>
-				</div>
-				<div class="grid w-full grid-cols-2 gap-3 md:grid-cols-4">
-					<div
-						class="border-comet-200 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border bg-white/70 p-3"
-					>
-						<div class="text-comet-500 text-xs">Records</div>
-						<div class="text-comet-900 dark:text-comet-100 text-lg font-semibold">{{ totalRecords }}</div>
-					</div>
-					<div
-						class="border-comet-200 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border bg-white/70 p-3"
-					>
-						<div class="text-comet-500 text-xs">Filtered</div>
-						<div class="text-comet-900 dark:text-comet-100 text-lg font-semibold">{{ filteredCount }}</div>
-					</div>
-					<div
-						class="border-comet-200 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border bg-white/70 p-3"
-					>
-						<div class="text-comet-500 text-xs">Proxied</div>
-						<div class="text-comet-900 dark:text-comet-100 text-lg font-semibold">{{ proxiedCount }}</div>
-					</div>
-					<div
-						class="border-comet-200 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border bg-white/70 p-3"
-					>
-						<div class="text-comet-500 text-xs">Types</div>
-						<div class="text-comet-900 dark:text-comet-100 text-lg font-semibold">{{ typesCount }}</div>
-					</div>
-				</div>
-				<div class="flex translate-x-[12px] flex-wrap items-center justify-center gap-4">
-					<UButton
-						v-for="ns in zone.name_servers || []"
-						:key="ns"
-						variant="ghost"
-						color="neutral"
-						size="sm"
-						trailing-icon="i-clarity-clipboard-line"
-						:aria-label="`Copy nameserver ${ns}`"
-						class="text-comet-600 dark:text-comet-400 font-bold italic"
-						@click="copyToClipboard(ns, 'Nameserver')"
-					>
-						{{ ns }}
-					</UButton>
+
+			<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+				<div v-for="stat in recordStats" :key="stat.label" class="surface-panel p-4">
+					<p class="text-muted text-xs font-medium">{{ stat.label }}</p>
+					<p class="text-highlighted mt-1 text-xl font-semibold tabular-nums">{{ stat.value }}</p>
 				</div>
 			</div>
-			<div class="flex w-full flex-col items-center justify-center gap-4">
-				<div
-					v-if="dnsLoadError"
-					class="w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+
+			<div v-if="zone.name_servers?.length" class="flex flex-wrap items-center gap-2">
+				<span class="text-muted text-xs font-semibold tracking-wide uppercase">Nameservers</span>
+				<UButton
+					v-for="ns in zone.name_servers"
+					:key="ns"
+					variant="soft"
+					color="neutral"
+					size="sm"
+					trailing-icon="i-clarity-clipboard-line"
+					:aria-label="`Copy nameserver ${ns}`"
+					class="font-mono text-xs"
+					@click="copyToClipboard(ns, 'Nameserver')"
 				>
-					{{ dnsLoadError }}
-				</div>
-				<div class="flex w-full flex-wrap items-center justify-between gap-4">
-					<div class="flex w-full gap-4 md:w-[calc(50%-0.5rem)]">
-						<USelectMenu
-							v-model="selectedStatus"
-							:items="dnsTypes"
-							multiple
-							placeholder="Type"
-							class="min-w-24"
-						/>
-						<div class="relative grow">
-							<UTooltip text="Press '/' to search">
-								<UInput
-									ref="searchInput"
-									v-model="searchQuery"
-									icon="i-heroicons-magnifying-glass-20-solid"
-									type="text"
-									placeholder="Search records..."
-									color="neutral"
-									class="w-full min-w-48 transition-all focus-within:shadow-md"
-									size="lg"
-									@focus="
-										() => {
-											setTimeout(
-												() => searchInput.value?.$el.querySelector('input')?.select(),
-												100
-											)
-										}
-									"
-								/>
-							</UTooltip>
-							<UButton
-								v-if="searchQuery"
-								variant="ghost"
-								color="neutral"
-								size="xs"
-								icon="i-heroicons-x-mark-20-solid"
-								aria-label="Clear search"
-								class="absolute top-2 right-2"
-								@click="searchQuery = ''"
+					{{ ns }}
+				</UButton>
+			</div>
+
+			<UBadge v-if="searchQuery || selectedStatus.length" color="primary" variant="subtle" class="self-start">
+				<span v-if="searchQuery">Search: {{ searchQuery }}</span>
+				<span v-if="selectedStatus.length">Types: {{ selectedStatus.join(', ') }}</span>
+				<UButton
+					variant="ghost"
+					color="primary"
+					size="xs"
+					icon="i-heroicons-x-mark"
+					aria-label="Clear all record filters"
+					@click="clearFilters"
+				/>
+			</UBadge>
+			<div class="flex w-full flex-col gap-4">
+				<UAlert
+					v-if="dnsLoadError"
+					color="error"
+					variant="subtle"
+					icon="i-heroicons-exclamation-triangle"
+					title="Couldn’t Load DNS Records"
+					:description="dnsLoadError"
+				>
+					<template #actions>
+						<UButton color="error" variant="soft" size="sm" :loading="loading" @click="retryDns">
+							Try Again
+						</UButton>
+					</template>
+				</UAlert>
+
+				<div class="surface-panel flex w-full flex-col gap-4 p-4 lg:flex-row lg:items-end lg:justify-between">
+					<div class="grid w-full gap-4 sm:grid-cols-[10rem_minmax(0,1fr)] lg:max-w-2xl lg:flex-1">
+						<UFormField label="Record Types" name="record-types">
+							<USelectMenu
+								v-model="selectedStatus"
+								:items="dnsTypes"
+								multiple
+								placeholder="All types…"
+								aria-label="Filter by record type"
+								class="w-full"
 							/>
-						</div>
+						</UFormField>
+						<UFormField label="Search Records" name="record-search">
+							<div class="relative min-w-0">
+								<UTooltip text="Press '/' to search">
+									<UInput
+										id="record-search"
+										ref="searchInput"
+										v-model="searchQuery"
+										name="record-search"
+										autocomplete="off"
+										:spellcheck="false"
+										icon="i-heroicons-magnifying-glass-20-solid"
+										type="search"
+										placeholder="Search names and values…"
+										color="neutral"
+										class="w-full min-w-0 transition-shadow focus-within:shadow-md"
+										size="lg"
+										:ui="{ base: 'pe-11' }"
+										@focus="focusRecordSearch"
+									/>
+								</UTooltip>
+								<UButton
+									v-if="searchQuery"
+									variant="ghost"
+									color="neutral"
+									size="xs"
+									icon="i-heroicons-x-mark-20-solid"
+									aria-label="Clear record search"
+									class="absolute top-1.5 right-1.5"
+									@click="searchQuery = ''"
+								/>
+							</div>
+						</UFormField>
 					</div>
-					<div class="flex w-full items-center gap-4 md:w-[calc(50%-0.5rem)] md:justify-end">
-						<USelect v-model="pageSize" :items="pageSizeOptions" size="md" class="w-28" />
+					<div class="flex w-full flex-wrap items-end gap-2 lg:w-auto lg:justify-end">
+						<UFormField label="Rows" name="page-size">
+							<USelect
+								v-model="pageSize"
+								:items="pageSizeOptions"
+								aria-label="Records per page"
+								class="w-32"
+							/>
+						</UFormField>
 						<UButton
 							v-if="selectedRecordIds.length"
 							color="error"
 							variant="outline"
 							icon="i-heroicons-trash-20-solid"
-							class="grow md:grow-0"
+							class="grow sm:grow-0"
 							@click="openDeleteModal(selectedRecords)"
 						>
-							Delete ({{ selectedRecordIds.length }})
+							Delete {{ selectedRecordIds.length }}
 						</UButton>
 						<UDropdownMenu :items="columnPickerItems" :content="{ align: 'end' }">
 							<UButton
@@ -225,23 +225,18 @@
 								color="neutral"
 								variant="outline"
 								trailing-icon="i-heroicons-chevron-down-20-solid"
-								class="grow md:grow-0"
+								class="grow sm:grow-0"
 							/>
 						</UDropdownMenu>
-						<UPagination
-							v-model:page="page"
-							:items-per-page="pageSize"
-							:total="filteredRecords.length"
-							class="shrink-0 md:ml-2"
-						/>
 					</div>
 				</div>
 				<UTable
+					v-if="!dnsLoadError"
 					v-model:column-visibility="columnVisibility"
 					:data="rows"
 					:columns="columns"
 					:loading="loading"
-					class="border-comet-300 dark:border-comet-700 w-full rounded-lg border"
+					class="border-default bg-default w-full overflow-x-auto rounded-xl border"
 					:ui="{
 						tr: {
 							base: 'even:bg-comet-100 dark:even:bg-comet-950/50 hover:bg-comet-200 dark:hover:bg-comet-800'
@@ -254,6 +249,7 @@
 					<template #select-header>
 						<UCheckbox
 							:model-value="selectAllState"
+							aria-label="Select all visible DNS records"
 							@click.stop
 							@update:model-value="(value) => toggleSelectAllVisible(value === true)"
 						/>
@@ -261,6 +257,7 @@
 					<template #select-cell="{ row }">
 						<UCheckbox
 							:model-value="selectedRecordIds.includes(row.original.id)"
+							:aria-label="`Select ${row.original._displayName}`"
 							@click.stop
 							@update:model-value="(value) => toggleRecordSelection(row.original, value === true)"
 						/>
@@ -286,17 +283,14 @@
 								:name="getRecordTypeIcon(row.original.type)"
 								class="text-comet-500 h-4 w-4 shrink-0"
 							/>
-							<span
-								role="button"
-								tabindex="0"
+							<NuxtLink
+								:to="getRecordDestination(row.original.id)"
 								:aria-label="`Edit ${row.original._displayName}`"
-								class="min-w-0 cursor-pointer truncate rounded text-xs font-medium group-hover:underline focus-visible:ring-2 md:text-sm"
-								@click="navigateToRecord(row.original.id)"
-								@keydown.enter.prevent="navigateToRecord(row.original.id)"
-								@keydown.space.prevent="navigateToRecord(row.original.id)"
+								class="focus-visible:ring-primary min-w-0 truncate rounded text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-none md:text-sm"
+								@click="rememberRecord(row.original.id)"
 							>
 								{{ row.original._displayName }}
-							</span>
+							</NuxtLink>
 							<UButton
 								icon="i-heroicons-arrow-top-right-on-square"
 								variant="ghost"
@@ -311,30 +305,27 @@
 						<div
 							class="group flex max-w-[140px] items-center gap-2 overflow-hidden sm:max-w-[200px] md:max-w-[280px] lg:max-w-[360px]"
 						>
-							<span
-								role="button"
-								tabindex="0"
+							<NuxtLink
+								:to="getRecordDestination(row.original.id)"
 								:aria-label="`Edit record ${row.original._displayName}`"
-								class="min-w-0 cursor-pointer truncate rounded text-xs font-medium group-hover:underline focus-visible:ring-2 md:text-sm"
-								@click="navigateToRecord(row.original.id)"
-								@keydown.enter.prevent="navigateToRecord(row.original.id)"
-								@keydown.space.prevent="navigateToRecord(row.original.id)"
+								class="focus-visible:ring-primary min-w-0 truncate rounded text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-none md:text-sm"
+								@click="rememberRecord(row.original.id)"
 							>
 								{{ row.original._displayContent }}
-							</span>
+							</NuxtLink>
 							<UButton
 								icon="i-clarity-clipboard-line"
 								variant="ghost"
 								color="neutral"
 								size="xs"
-								class="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+								class="sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
 								:aria-label="`Copy value of ${row.original._displayName}`"
 								@click.stop="copyToClipboard(row.original._displayContent, 'Record value')"
 							/>
 							<div v-if="row.original.proxiable" @click.stop>
 								<USwitch
 									v-model="row.original.proxied"
-									color="warning"
+									color="primary"
 									:disabled="proxyPending.has(row.original.id)"
 									:aria-label="`Toggle Cloudflare proxy for ${row.original._displayName}`"
 									@update:model-value="() => updateProxyStatus(row.original)"
@@ -344,12 +335,12 @@
 					</template>
 					<template #created_on-cell="{ row }">
 						<p class="truncate text-xs md:text-sm">
-							{{ row.original.created_on ? dayjs(row.original.created_on).format('DD MMM YYYY') : '—' }}
+							{{ formatDate(row.original.created_on) }}
 						</p>
 					</template>
 					<template #modified_on-cell="{ row }">
 						<p class="truncate text-xs md:text-sm">
-							{{ row.original.modified_on ? dayjs(row.original.modified_on).format('DD MMM YYYY') : '—' }}
+							{{ formatDate(row.original.modified_on) }}
 						</p>
 					</template>
 					<template #actions-cell="{ row }">
@@ -380,12 +371,11 @@
 								icon="i-heroicons-x-mark-20-solid"
 								@click="clearFilters"
 							>
-								Clear filters
+								Clear Filters
 							</UButton>
 							<UButton
 								v-else
-								variant="outline"
-								color="success"
+								color="primary"
 								icon="i-clarity-plus-circle-solid"
 								@click="navigateToCreate"
 							>
@@ -394,14 +384,14 @@
 						</div>
 					</template>
 				</UTable>
-				<div class="flex w-full justify-end">
+				<div v-if="!dnsLoadError && filteredRecords.length > pageSize" class="flex w-full justify-end">
 					<UPagination v-model:page="page" :items-per-page="pageSize" :total="filteredRecords.length" />
 				</div>
 				<UModal v-model:open="deleteModalOpen">
 					<template #title>
 						<div class="flex items-center gap-2">
 							<UIcon name="i-heroicons-exclamation-triangle" class="h-5 w-5 text-red-500" />
-							<span>Delete records</span>
+							<span>Delete Records?</span>
 						</div>
 					</template>
 					<template #description>
@@ -440,9 +430,36 @@
 						</div>
 					</template>
 					<template #footer>
-						<div class="flex justify-end gap-3">
+						<div class="flex w-full justify-end gap-3">
 							<UButton color="neutral" variant="ghost" @click="closeDeleteModal">Cancel</UButton>
-							<UButton color="error" :loading="deleteLoading" @click="confirmDelete">Delete</UButton>
+							<UButton color="error" :loading="deleteLoading" @click="confirmDelete"
+								>Delete Records</UButton
+							>
+						</div>
+					</template>
+				</UModal>
+
+				<UModal v-model:open="sslConfirmOpen">
+					<template #title>Lower SSL Protection?</template>
+					<template #description>
+						Changing to
+						<span class="text-highlighted font-semibold capitalize">{{ pendingSslMode }}</span> can weaken
+						visitor-to-origin encryption for {{ zoneName }}.
+					</template>
+					<template #body>
+						<p class="text-muted text-sm">
+							Only continue if your origin cannot support Full or Strict mode. You can change this again
+							later.
+						</p>
+					</template>
+					<template #footer>
+						<div class="flex w-full justify-end gap-3">
+							<UButton color="neutral" variant="ghost" @click="sslConfirmOpen = false"
+								>Keep Current Mode</UButton
+							>
+							<UButton color="error" :loading="sslUpdating" @click="confirmSslChange">
+								Use {{ pendingSslMode === 'off' ? 'Off' : 'Flexible' }}
+							</UButton>
 						</div>
 					</template>
 				</UModal>
@@ -451,7 +468,7 @@
 					<template #title>
 						<div class="flex items-center gap-2">
 							<UIcon name="i-heroicons-arrow-up-tray" class="h-5 w-5" />
-							<span>Import BIND zone file</span>
+							<span>Import BIND Zone File</span>
 						</div>
 					</template>
 					<template #description>
@@ -472,32 +489,31 @@
 							<UTextarea
 								v-model="importText"
 								:rows="10"
-								placeholder="$ORIGIN example.com.&#10;www 1 IN A 192.0.2.1"
+								placeholder="$ORIGIN example.com.&#10;www 1 IN A 192.0.2.1…"
 								class="w-full font-mono text-xs"
 							/>
 						</div>
 					</template>
 					<template #footer>
-						<div class="flex justify-end gap-3">
+						<div class="flex w-full justify-end gap-3">
 							<UButton color="neutral" variant="ghost" @click="importModalOpen = false">Cancel</UButton>
 							<UButton
-								color="success"
+								color="primary"
 								:loading="importLoading"
 								:disabled="!importText.trim()"
 								@click="importZone"
 							>
-								Import records
+								Import Records
 							</UButton>
 						</div>
 					</template>
 				</UModal>
 			</div>
-		</div>
+		</section>
 	</PageContainer>
 </template>
 
 <script setup>
-import dayjs from 'dayjs'
 import { useDebounceFn } from '@vueuse/core'
 
 const route = useRoute()
@@ -532,12 +548,25 @@ const exportLoading = ref(false)
 const importModalOpen = ref(false)
 const importText = ref('')
 const importLoading = ref(false)
+const dateFormatter = new Intl.DateTimeFormat('en-GB', {
+	day: '2-digit',
+	month: 'short',
+	year: 'numeric'
+})
+const formatDate = (value) => {
+	if (!value) return '—'
+	const date = new Date(value)
+	return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
+}
 const windowSize = useWindowSize()
 const isLargeScreen = computed(() => windowSize.width.value >= 768)
 const botFightMode = ref(false)
 const botLoading = ref(false)
 const botUnavailable = ref(false)
 const botUnavailableReason = ref('')
+const sslUpdating = ref(false)
+const sslConfirmOpen = ref(false)
+const pendingSslMode = ref('')
 const dnsLoadError = ref('')
 const capabilities = ref(null)
 const capabilityMissing = ref([])
@@ -593,6 +622,21 @@ const canAccountAnalytics = computed(() =>
 	Boolean(capabilities.value && capabilities.value.accountAnalytics && capabilities.value.accountAnalytics.available)
 )
 const moreNavItems = computed(() => {
+	const tools = [
+		{
+			label: exportLoading.value ? 'Exporting Zone…' : 'Export Zone',
+			icon: 'i-heroicons-arrow-down-tray',
+			disabled: exportLoading.value,
+			onSelect: exportZone
+		},
+		{
+			label: 'Import Zone File',
+			icon: 'i-heroicons-arrow-up-tray',
+			onSelect: () => {
+				importModalOpen.value = true
+			}
+		}
+	]
 	const items = []
 	if (canRulesets.value)
 		items.push({ label: 'Rules', icon: 'i-heroicons-shield-check', to: `/zones/${zoneId.value}/rules` })
@@ -612,7 +656,13 @@ const moreNavItems = computed(() => {
 			icon: 'i-heroicons-shield-check',
 			to: `/zones/${zoneId.value}/dns-firewall`
 		})
-	return items.length ? [items] : []
+	return items.length ? [tools, items] : [tools]
+})
+
+const sslLabel = computed(() => {
+	const value = zone.value?.ssl?.value
+	if (!value) return 'Unknown'
+	return value.charAt(0).toUpperCase() + value.slice(1)
 })
 const getRecordsCacheKey = () => `${apiKey.value}:${zoneId.value}`
 const getRecordsUpdatedKey = () => `cf-records-updated-${zoneId.value}`
@@ -698,62 +748,76 @@ const updateProxyStatus = async (record) => {
 }
 
 const updateSslSetting = async (sslMode) => {
-	const response = await fetch('/api/update_ssl', {
-		method: 'POST',
-		body: JSON.stringify({
-			apiKey: apiKey.value,
-			currZone: zoneId.value,
-			ssl: sslMode
+	sslUpdating.value = true
+	try {
+		const data = await $fetch('/api/update_ssl', {
+			method: 'POST',
+			body: {
+				apiKey: apiKey.value,
+				currZone: zoneId.value,
+				ssl: sslMode
+			}
 		})
-	})
-	if (response.ok) {
-		const data = await response.json()
-		if (data.success) {
-			toast.add({
-				id: 'update-ssl-success' + Date.now(),
-				title: 'Update success',
-				description: 'SSL status updated successfully',
-				icon: 'i-clarity-check-circle-solid',
-				duration: 3000,
-				color: 'success'
-			})
-			await getAll()
-		} else {
-			console.error(data.errors[0].message)
-			toast.add({
-				id: 'update-ssl-error' + Date.now(),
-				title: 'Update failed',
-				description: data.errors[0].message,
-				icon: 'i-clarity-warning-solid',
-				duration: 3000,
-				color: 'error'
-			})
-		}
-	} else {
-		console.error('HTTP-Error: ' + response.status)
+		if (!data?.success) throw new Error(data?.errors?.[0]?.message || 'Cloudflare rejected the SSL change')
+		toast.add({
+			id: 'update-ssl-success' + Date.now(),
+			title: 'SSL Mode Updated',
+			description: `SSL mode is now ${sslMode}.`,
+			icon: 'i-clarity-check-circle-solid',
+			duration: 3000,
+			color: 'success'
+		})
+		await getAll()
+	} catch (error) {
+		toast.add({
+			id: 'update-ssl-error' + Date.now(),
+			title: 'SSL Update Failed',
+			description: error?.data?.statusMessage || error?.message || 'Try the SSL change again.',
+			icon: 'i-clarity-warning-solid',
+			duration: 4000,
+			color: 'error'
+		})
+	} finally {
+		sslUpdating.value = false
+		pendingSslMode.value = ''
 	}
+}
+
+const requestSslSetting = (sslMode) => {
+	if (sslMode === 'flexible' || sslMode === 'off') {
+		pendingSslMode.value = sslMode
+		sslConfirmOpen.value = true
+		return
+	}
+	updateSslSetting(sslMode)
+}
+
+const confirmSslChange = async () => {
+	const mode = pendingSslMode.value
+	sslConfirmOpen.value = false
+	if (mode) await updateSslSetting(mode)
 }
 
 const sslMenuItems = computed(() => [
 	{
 		label: 'Strict',
 		icon: 'i-clarity-lock-solid',
-		onSelect: () => updateSslSetting('strict')
+		onSelect: () => requestSslSetting('strict')
 	},
 	{
 		label: 'Full',
 		icon: 'i-clarity-lock-line',
-		onSelect: () => updateSslSetting('full')
+		onSelect: () => requestSslSetting('full')
 	},
 	{
 		label: 'Flexible',
 		icon: 'i-clarity-curve-chart-solid',
-		onSelect: () => updateSslSetting('flexible')
+		onSelect: () => requestSslSetting('flexible')
 	},
 	{
 		label: 'Off',
 		icon: 'i-clarity-no-access-solid',
-		onSelect: () => updateSslSetting('off')
+		onSelect: () => requestSslSetting('off')
 	}
 ])
 
@@ -919,17 +983,17 @@ const items = (row) => {
 			{
 				label: 'Edit',
 				icon: 'i-heroicons-pencil-square-20-solid',
-				onClick: () => navigateToRecord(row.id)
+				onSelect: () => navigateToRecord(row.id)
 			},
 			{
 				label: 'Copy value',
 				icon: 'i-clarity-clipboard-line',
-				onClick: () => copyToClipboard(formatContent(row), 'Record value')
+				onSelect: () => copyToClipboard(formatContent(row), 'Record value')
 			},
 			{
 				label: 'Open',
 				icon: 'i-heroicons-arrow-top-right-on-square',
-				onClick: () => openRecordUrl(row)
+				onSelect: () => openRecordUrl(row)
 			},
 			{
 				label: row.proxiable ? 'Proxiable' : 'Not Proxiable',
@@ -942,7 +1006,7 @@ const items = (row) => {
 				label: 'Delete',
 				icon: 'i-heroicons-trash-20-solid',
 				color: 'error',
-				onClick: () => openDeleteModal(row)
+				onSelect: () => openDeleteModal(row)
 			}
 		]
 	]
@@ -1004,6 +1068,12 @@ const totalRecords = computed(() => (dnsRecords.value || []).length)
 const filteredCount = computed(() => (filteredRecords.value || []).length)
 const proxiedCount = computed(() => (dnsRecords.value || []).filter((r) => r && r.proxied === true).length)
 const typesCount = computed(() => (dnsTypes.value || []).length)
+const recordStats = computed(() => [
+	{ label: 'Records', value: totalRecords.value },
+	{ label: 'Filtered', value: filteredCount.value },
+	{ label: 'Proxied', value: proxiedCount.value },
+	{ label: 'Record Types', value: typesCount.value }
+])
 const pageCount = computed(() => Math.max(1, Math.ceil(filteredRecords.value.length / pageSize.value)))
 
 const selectedRecords = computed(() => {
@@ -1143,12 +1213,16 @@ onUnmounted(() => {
 	window.removeEventListener('keydown', handleKeyDown)
 })
 
+const focusRecordSearch = () => {
+	setTimeout(() => document.getElementById('record-search')?.select(), 50)
+}
+
 // Keyboard shortcut handler
 const handleKeyDown = (e) => {
 	// Focus search box when '/' is pressed and not in an input field
-	if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+	if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
 		e.preventDefault()
-		searchInput.value?.$el.querySelector('input')?.focus()
+		document.getElementById('record-search')?.focus()
 	}
 }
 
@@ -1195,6 +1269,12 @@ const getDns = async ({ preferCache = true, force = false } = {}) => {
 			color: 'error'
 		})
 	}
+}
+
+const retryDns = async () => {
+	loading.value = true
+	await getDns({ force: true })
+	loading.value = false
 }
 
 const getZone = async () => {
@@ -1265,61 +1345,58 @@ const closeDeleteModal = () => {
 const confirmDelete = async () => {
 	if (!deleteTargets.value.length) return
 	deleteLoading.value = true
-	const results = await Promise.all(deleteTargets.value.map((record) => delDns(record)))
-	const successCount = results.filter(Boolean).length
-	const failedCount = results.length - successCount
-	if (successCount > 0) {
-		toast.add({
-			id: 'delete-record-success' + Date.now(),
-			title: 'Delete success',
-			description: `${successCount} record${successCount === 1 ? '' : 's'} deleted`,
-			icon: 'i-clarity-check-circle-solid',
-			duration: 3000,
-			color: 'success'
-		})
-		markRecordsUpdated()
-		await getDns({ force: true })
-		selectedRecordIds.value = selectedRecordIds.value.filter((id) =>
-			dnsRecords.value.some((record) => record.id === id)
-		)
+	try {
+		const results = await Promise.allSettled(deleteTargets.value.map((record) => delDns(record)))
+		const successCount = results.filter((result) => result.status === 'fulfilled' && result.value).length
+		const failedCount = results.length - successCount
+		if (successCount > 0) {
+			toast.add({
+				id: 'delete-record-success' + Date.now(),
+				title: 'Delete success',
+				description: `${successCount} record${successCount === 1 ? '' : 's'} deleted`,
+				icon: 'i-clarity-check-circle-solid',
+				duration: 3000,
+				color: 'success'
+			})
+			markRecordsUpdated()
+			await getDns({ force: true })
+			selectedRecordIds.value = selectedRecordIds.value.filter((id) =>
+				dnsRecords.value.some((record) => record.id === id)
+			)
+		}
+		if (failedCount > 0) {
+			toast.add({
+				id: 'delete-record-failed' + Date.now(),
+				title: 'Delete failed',
+				description: `${failedCount} record${failedCount === 1 ? '' : 's'} failed to delete`,
+				icon: 'i-clarity-warning-solid',
+				duration: 4000,
+				color: 'error'
+			})
+		}
+	} finally {
+		deleteLoading.value = false
+		closeDeleteModal()
 	}
-	if (failedCount > 0) {
-		toast.add({
-			id: 'delete-record-failed' + Date.now(),
-			title: 'Delete failed',
-			description: `${failedCount} record${failedCount === 1 ? '' : 's'} failed to delete`,
-			icon: 'i-clarity-warning-solid',
-			duration: 4000,
-			color: 'error'
-		})
+}
+
+const rememberRecord = (recordId) => {
+	localStorage.setItem('cf-dns-id', recordId)
+	const record = dnsRecords.value.find((r) => r.id === recordId)
+	if (record) localStorage.setItem('cf-dns-name', record.name)
+}
+
+const getRecordDestination = (recordId) => {
+	const destination = { path: `/zones/${zoneId.value}/records/${recordId}` }
+	if (Object.keys(route.query).length) {
+		destination.query = { return: encodeURIComponent(JSON.stringify(route.query)) }
 	}
-	deleteLoading.value = false
-	closeDeleteModal()
+	return destination
 }
 
 const navigateToRecord = (recordId) => {
-	// Also store in localStorage for compatibility with older pages
-	localStorage.setItem('cf-dns-id', recordId)
-
-	// Find record to store its name
-	const record = dnsRecords.value.find((r) => r.id === recordId)
-	if (record) {
-		localStorage.setItem('cf-dns-name', record.name)
-	}
-
-	// Add return query parameters to preserve filter state
-	let returnQuery = ''
-	if (Object.keys(route.query).length > 0) {
-		// Encode the current query state
-		returnQuery = encodeURIComponent(JSON.stringify(route.query))
-	}
-
-	// Navigate with return query param if we have filters
-	if (returnQuery) {
-		router.push(`/zones/${zoneId.value}/records/${recordId}?return=${returnQuery}`)
-	} else {
-		router.push(`/zones/${zoneId.value}/records/${recordId}`)
-	}
+	rememberRecord(recordId)
+	router.push(getRecordDestination(recordId))
 }
 
 const toggleRecordSelection = (record, value) => {
@@ -1496,21 +1573,14 @@ const formatSrvRecordName = (record) => {
 	return name
 }
 
-// Add function to navigate to create page with return state
 const navigateToCreate = () => {
-	// Add return query parameters to preserve filter state
-	let returnQuery = ''
-	if (Object.keys(route.query).length > 0) {
-		// Encode the current query state
-		returnQuery = encodeURIComponent(JSON.stringify(route.query))
+	const destination = { path: `/zones/${zoneId.value}/records/create` }
+	if (Object.keys(route.query).length) {
+		// Vue Router will encode the query value once more. The create page
+		// decodes this inner value to restore filters, including literal `%`.
+		destination.query = { return: encodeURIComponent(JSON.stringify(route.query)) }
 	}
-
-	// Navigate with return query param if we have filters
-	if (returnQuery) {
-		router.push(`/zones/${zoneId.value}/records/create?return=${returnQuery}`)
-	} else {
-		router.push(`/zones/${zoneId.value}/records/create`)
-	}
+	router.push(destination)
 }
 
 // Add the clearFilters method

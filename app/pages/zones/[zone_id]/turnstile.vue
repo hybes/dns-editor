@@ -12,39 +12,47 @@
 
 		<div class="flex flex-col gap-6">
 			<div class="flex flex-col items-center justify-center gap-2">
-				<h1 class="text-center text-2xl font-semibold text-stone-900 dark:text-stone-100">
+				<h1 class="text-highlighted text-center text-2xl font-semibold">
 					{{ zoneName || zoneId }}
 				</h1>
 				<CapabilityIndicator :missing-items="capabilityMissing" />
-				<p class="text-sm text-stone-600 dark:text-stone-400">Turnstile widgets</p>
+				<p class="text-muted text-sm">Turnstile widgets</p>
 			</div>
 
-			<div class="w-full rounded-xl border border-stone-300 p-6 dark:border-stone-700">
-				<div v-if="!canTurnstile" class="text-sm text-stone-700 dark:text-stone-200">
-					Turnstile is unavailable for this token/zone.
-				</div>
+			<div class="border-default bg-default w-full rounded-xl border p-6">
+				<div v-if="!canTurnstile" class="text-toned text-sm">Turnstile is unavailable for this token/zone.</div>
 
 				<div v-else class="flex flex-col gap-4">
 					<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
 						<div class="flex flex-col gap-1">
-							<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Action</span>
+							<span class="text-toned text-sm font-medium">Action</span>
 							<USelect v-model="action" :items="actions" />
 						</div>
 						<div class="flex flex-col gap-1">
-							<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Sitekey</span>
+							<span class="text-toned text-sm font-medium">
+								Sitekey<span v-if="isDeleteAction" class="text-error">*</span>
+							</span>
 							<UInput v-model="sitekey" placeholder="For get/update/delete" />
 						</div>
 						<div class="flex items-end">
-							<UButton color="primary" variant="outline" :loading="loading" @click="run"> Run </UButton>
+							<UButton
+								:color="isDeleteAction ? 'error' : 'primary'"
+								:variant="isDeleteAction ? 'solid' : 'outline'"
+								:icon="isDeleteAction ? 'i-heroicons-trash-20-solid' : 'i-heroicons-play-20-solid'"
+								:loading="loading"
+								@click="run"
+							>
+								{{ isDeleteAction ? 'Delete…' : 'Run' }}
+							</UButton>
 						</div>
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<span class="text-sm font-medium text-stone-700 dark:text-stone-200">Payload (JSON)</span>
+						<span class="text-toned text-sm font-medium">Payload (JSON)</span>
 						<UTextarea v-model="payload" :rows="10" placeholder="{}" />
 					</div>
 
-					<div v-if="error" class="text-sm text-red-600 dark:text-red-400">{{ error }}</div>
+					<div v-if="error" class="text-error text-sm">{{ error }}</div>
 
 					<div v-if="result" class="flex flex-col gap-2">
 						<div class="flex justify-end">
@@ -58,14 +66,42 @@
 								Copy JSON
 							</UButton>
 						</div>
-						<pre
-							class="max-h-[520px] overflow-auto rounded-lg bg-stone-100 p-4 text-xs dark:bg-stone-950"
-							>{{ result }}</pre
-						>
+						<pre class="bg-muted text-default max-h-[520px] overflow-auto rounded-lg p-4 text-xs">{{
+							result
+						}}</pre>
 					</div>
 				</div>
 			</div>
 		</div>
+
+		<UModal v-model:open="deleteModalOpen">
+			<template #title>
+				<div class="flex items-center gap-2">
+					<UIcon name="i-heroicons-exclamation-triangle" class="text-error h-5 w-5" />
+					<span>Delete Turnstile widget?</span>
+				</div>
+			</template>
+			<template #description>
+				<p class="text-muted text-sm">
+					This will permanently delete the widget with sitekey
+					<span class="text-highlighted font-mono font-semibold">{{ deleteTarget }}</span
+					>.
+				</p>
+			</template>
+			<template #body>
+				<p class="text-muted text-sm">This action cannot be undone.</p>
+			</template>
+			<template #footer>
+				<div class="flex w-full justify-end gap-3">
+					<UButton color="neutral" variant="ghost" :disabled="loading" @click="closeDeleteModal">
+						Cancel
+					</UButton>
+					<UButton color="error" icon="i-heroicons-trash-20-solid" :loading="loading" @click="confirmDelete">
+						Delete Widget
+					</UButton>
+				</div>
+			</template>
+		</UModal>
 	</PageContainer>
 </template>
 
@@ -85,10 +121,13 @@ const actions = ['list', 'create', 'get', 'update', 'delete']
 const action = ref('list')
 const sitekey = ref('')
 const payload = ref('{}')
+const isDeleteAction = computed(() => action.value === 'delete')
 
 const loading = ref(false)
 const error = ref('')
 const result = ref('')
+const deleteModalOpen = ref(false)
+const deleteTarget = ref('')
 const toast = useToast()
 
 const copyResult = async () => {
@@ -120,22 +159,24 @@ const loadCaps = async () => {
 	}
 }
 
-const run = async () => {
+const executeAction = async ({ selectedAction = action.value, targetSitekey = sitekey.value } = {}) => {
 	error.value = ''
 	result.value = ''
 	loading.value = true
 	try {
 		let parsed = {}
-		if (payload.value && payload.value.trim()) parsed = JSON.parse(payload.value)
+		if ((selectedAction === 'create' || selectedAction === 'update') && payload.value && payload.value.trim()) {
+			parsed = JSON.parse(payload.value)
+		}
 
 		let endpoint = '/api/turnstile_widgets'
-		const body = { apiKey: apiKey.value, currZone: zoneId.value, action: action.value }
+		const body = { apiKey: apiKey.value, currZone: zoneId.value, action: selectedAction }
 
-		if (action.value === 'get' || action.value === 'update' || action.value === 'delete') {
+		if (selectedAction === 'get' || selectedAction === 'update' || selectedAction === 'delete') {
 			endpoint = '/api/turnstile_widget'
-			body.sitekey = sitekey.value
-			if (action.value === 'update') body.widget = parsed
-		} else if (action.value === 'create') {
+			body.sitekey = targetSitekey
+			if (selectedAction === 'update') body.widget = parsed
+		} else if (selectedAction === 'create') {
 			body.widget = parsed
 		}
 
@@ -151,6 +192,35 @@ const run = async () => {
 	} finally {
 		loading.value = false
 	}
+}
+
+const run = async () => {
+	if (!isDeleteAction.value) {
+		await executeAction()
+		return
+	}
+
+	error.value = ''
+	result.value = ''
+	const targetSitekey = sitekey.value.trim()
+	if (!targetSitekey) {
+		error.value = 'Enter a sitekey before deleting.'
+		return
+	}
+
+	deleteTarget.value = targetSitekey
+	deleteModalOpen.value = true
+}
+
+const closeDeleteModal = () => {
+	deleteModalOpen.value = false
+	deleteTarget.value = ''
+}
+
+const confirmDelete = async () => {
+	if (!deleteTarget.value) return
+	await executeAction({ selectedAction: 'delete', targetSitekey: deleteTarget.value })
+	closeDeleteModal()
 }
 
 onMounted(async () => {

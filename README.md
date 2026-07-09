@@ -1,55 +1,57 @@
-# Self Hosted Cloudflare Editor
+# DNS Manager
 
-Open source project designed to have easier/quicker access to the Cloudflare API.
-Useful for creating a managed customer access to their domain, should they need to.
+A self-hosted Cloudflare DNS control centre built with Nuxt 4 and Nuxt UI. It provides a focused interface for browsing zones, creating and editing DNS records, managing imports and exports, and accessing supported Cloudflare security tools.
 
-## Useful Information
+## Requirements
 
-I used Nuxt 3's server structure to have the requests be run from the backend, in order to avoid CORS and other issues when sending traffic between sites.
-With the code being open-source you can see where the requests go, but would recommend you self-host it anyway. [Demo](https://dns.brth.uk)
-The site uses local storage to keep majority of the information in the browser, this may not be everyones preffered method, but it works.
+- Node.js `22.13+`, `24.11+`, or `26+`
+- npm 11+
+- A Cloudflare API token with access to the accounts, zones, and features you intend to manage
+- `OPENAI_API_KEY` only when using the optional AI DNS editor
 
-The project uses Nuxt UI, so to quickly and easily adjust the theming, use [app.config.js](https://github.com/Hybes/cf-editor-page/blob/main/app.config.js) and [tailwind.config.js](https://github.com/Hybes/cf-editor-page/blob/main/tailwind.config.js)
+The token entered in the UI is stored in the browser's local storage. Each operation sends it through this Nuxt server to Cloudflare; the server does not persist it. Self-host the app in an environment you trust.
 
 ## Setup
 
-Make sure to install the dependencies:
+Install the exact dependency tree from the lockfile:
 
 ```bash
-# npm
-npm install
+npm ci
 ```
 
-## Development Server
-
-Start the development server on `http://localhost:3000`:
+Start the development server at `http://localhost:3000`:
 
 ```bash
-# npm
 npm run dev
 ```
 
-## Production
-
-Build the application for production:
+## Validation
 
 ```bash
-# npm
+npm run lint
 npm run build
 ```
 
-Run on production:
+The production build uses Nitro's Node server preset and retains the `server/api/*` routes that proxy Cloudflare requests.
+
+## Production
+
+Build and run locally:
 
 ```bash
-# npm
+npm run build
 npm run start
 ```
 
-### Contributing
+Or build the included container:
 
-Feel free to contribute, PR's will need to be approved to maintain the safety of the project.
+```bash
+docker build -t dns-manager .
+docker run --rm -p 3000:3000 -e OPENAI_API_KEY dns-manager
+```
 
-#### Links
+Theme tokens live in [`app/assets/css/main.css`](app/assets/css/main.css), while Nuxt UI component defaults live in [`app/app.config.js`](app/app.config.js).
 
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
-Look at the [Nuxt 3 documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+## Privacy and indexing
+
+This is an authenticated operational tool, not a public website. The app emits both `robots` metadata and an `X-Robots-Tag` header to prevent indexing.

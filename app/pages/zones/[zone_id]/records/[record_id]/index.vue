@@ -1,17 +1,18 @@
 <template>
-	<PageContainer>
-		<div class="mb-2 flex items-center justify-start">
-			<UButton variant="outline" icon="i-clarity-undo-line" @click="goBack">Back</UButton>
+	<Loader
+		v-if="loading && !appBootLoading"
+		fullscreen
+		title="Loading DNS record"
+		subtitle="Fetching record details from Cloudflare…"
+	/>
+	<PageContainer v-else>
+		<div class="mb-6 flex items-center justify-start">
+			<UButton variant="ghost" color="neutral" icon="i-clarity-undo-line" :to="backDestination">
+				Back to Records
+			</UButton>
 		</div>
 
-		<Loader
-			v-if="loading && !appBootLoading"
-			fullscreen
-			title="Loading DNS record"
-			subtitle="Fetching record details from Cloudflare…"
-		/>
 		<DnsRecordForm
-			v-else
 			mode="edit"
 			:zone-name="record.zone_name || zoneId"
 			:initial-record="record"
@@ -24,7 +25,7 @@
 			<template #title>
 				<div class="flex items-center gap-2">
 					<UIcon name="i-heroicons-exclamation-triangle" class="h-5 w-5 text-red-500" />
-					<span>Delete record</span>
+					<span>Delete Record?</span>
 				</div>
 			</template>
 			<template #description>
@@ -39,9 +40,9 @@
 				<p class="text-muted text-xs">This action cannot be undone.</p>
 			</template>
 			<template #footer>
-				<div class="flex justify-end gap-3">
+				<div class="flex w-full justify-end gap-3">
 					<UButton color="neutral" variant="ghost" @click="deleteModalOpen = false">Cancel</UButton>
-					<UButton color="error" :loading="deleteLoading" @click="confirmDelete">Delete</UButton>
+					<UButton color="error" :loading="deleteLoading" @click="confirmDelete">Delete Record</UButton>
 				</div>
 			</template>
 		</UModal>
@@ -57,6 +58,17 @@ const { getApiKey } = useSession()
 
 const zoneId = computed(() => route.params.zone_id)
 const recordId = computed(() => route.params.record_id)
+const backDestination = computed(() => {
+	if (!route.query.return) return `/zones/${zoneId.value}/records`
+	try {
+		return {
+			path: `/zones/${zoneId.value}/records`,
+			query: JSON.parse(decodeURIComponent(route.query.return))
+		}
+	} catch {
+		return `/zones/${zoneId.value}/records`
+	}
+})
 const apiKey = ref('')
 const record = ref({})
 const loading = ref(true)
@@ -196,19 +208,6 @@ const confirmDelete = async () => {
 		deleteLoading.value = false
 		deleteModalOpen.value = false
 	}
-}
-
-const goBack = () => {
-	if (route.query.return) {
-		try {
-			const returnQuery = JSON.parse(decodeURIComponent(route.query.return))
-			router.push({ path: `/zones/${zoneId.value}/records`, query: returnQuery })
-			return
-		} catch {
-			// fall through
-		}
-	}
-	router.push(`/zones/${zoneId.value}/records`)
 }
 
 onMounted(() => {

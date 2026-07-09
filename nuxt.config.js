@@ -1,82 +1,42 @@
-import tailwindcss from '@tailwindcss/vite'
 export default defineNuxtConfig({
 	app: {
 		head: {
 			htmlAttrs: {
 				lang: 'en-GB'
 			},
+			meta: [
+				{ name: 'robots', content: 'noindex, nofollow, noarchive' },
+				{ name: 'color-scheme', content: 'dark light' }
+			],
 			link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
-			script: [
-				{
-					id: 'umami-script',
-					src: 'https://view.cnnct.uk/script.js',
-					async: true,
-					'data-website-id': '7911a836-2f1b-431a-903d-1d898a030724'
-				}
-			]
+			script:
+				process.env.NODE_ENV === 'production'
+					? [
+							{
+								id: 'umami-script',
+								src: 'https://view.cnnct.uk/script.js',
+								async: true,
+								'data-website-id': '7911a836-2f1b-431a-903d-1d898a030724'
+							}
+						]
+					: []
 		},
 		pageTransition: { name: 'fade', mode: 'out-in' }
 	},
 
-	vite: {
-		plugins: [tailwindcss()]
-	},
+	modules: ['@nuxt/ui', '@nuxt/eslint'],
 
-	site: {
-		url: 'https://dns.brth.uk',
-		name: 'DNS Manager',
-		description: 'API Key editor for Cloudflare DNS records',
-		defaultLocale: 'en-GB',
-		indexable: false
-	},
-
-	modules: ['@nuxt/ui', '@nuxt/icon', '@nuxt/eslint', '@nuxt/fonts', '@nuxtjs/seo'],
-
-	seo: {
-		meta: {
-			applicationName: 'DNS Manager',
-			keywords:
-				'cloudflare editor, cloudflare api, cloudflare api editor, dns api, cloudflare edit dns, cloudflare api dns edit',
-			themeColor: '#0c0a09',
-			colorScheme: 'dark light',
-			twitterCard: 'summary_large_image',
-			twitterSite: '@hybes',
-			twitterCreator: '@hybes',
-			ogImage: '/favicon.svg',
-			twitterImage: '/favicon.svg'
+	ui: {
+		fonts: false,
+		theme: {
+			transitions: true
 		}
 	},
 
-	seoUtils: {
-		redirectToCanonicalSiteUrl: true
-	},
-
-	robots: {
-		groups: [{ userAgent: ['*'], disallow: ['/'] }],
-		sitemap: [],
-		blockNonSeoBots: false
-	},
-
-	sitemap: {
-		enabled: false
-	},
-
-	schemaOrg: {
-		enabled: false
-	},
-
-	ogImage: {
-		enabled: false
-	},
-
-	linkChecker: {
-		failOnError: false,
-		skipInspections: ['external-if-timeout', 'missing-hash']
-	},
-
-	ui: {
-		global: true,
-		icons: ['clarity']
+	icon: {
+		serverBundle: {
+			collections: ['clarity', 'heroicons', 'lucide']
+		}
 	},
 
 	runtimeConfig: {
@@ -85,6 +45,14 @@ export default defineNuxtConfig({
 	},
 
 	css: ['~/assets/css/main.css'],
+
+	routeRules: {
+		'/**': {
+			headers: {
+				'X-Robots-Tag': 'noindex, nofollow, noarchive'
+			}
+		}
+	},
 
 	compatibilityDate: '2026-01-01'
 })

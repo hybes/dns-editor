@@ -10,8 +10,8 @@ WORKDIR /app
 # Copy source first so the `nuxt prepare` postinstall has nuxt.config + app present.
 COPY . .
 
-# Install exactly what the lockfile resolves (includes the @unhead/schema-org override
-# and the Linux oxc-parser bindings) and build the Nitro server output.
+# Install exactly what the lockfile resolves, including the platform-specific
+# optional native packages selected by npm, and build the Nitro server output.
 RUN npm ci && npm run build
 
 # ---- Runtime stage ----

@@ -1,6 +1,7 @@
 <template>
 	<UApp>
-		<div class="relative min-h-screen">
+		<NuxtRouteAnnouncer />
+		<div class="relative min-h-dvh">
 			<div v-if="appBootLoading">
 				<Loader
 					fullscreen
@@ -13,7 +14,9 @@
 				/>
 			</div>
 
-			<NuxtPage />
+			<div v-show="!appBootLoading" :inert="appBootLoading" :aria-hidden="appBootLoading ? 'true' : undefined">
+				<NuxtPage />
+			</div>
 		</div>
 	</UApp>
 </template>
@@ -22,6 +25,16 @@
 // The global auth middleware (~/middleware/auth.global.js) owns the redirect to
 // /login when no API key is present, so app boot only needs to release the splash.
 const appBootLoading = useState('appBootLoading', () => true)
+const colorMode = useColorMode()
+
+useHead(() => ({
+	meta: [
+		{
+			name: 'theme-color',
+			content: colorMode.value === 'dark' ? '#10141a' : '#fbfcfd'
+		}
+	]
+}))
 
 onMounted(() => {
 	appBootLoading.value = false
@@ -38,5 +51,12 @@ onMounted(() => {
 .fade-enter-from,
 .fade-leave-to {
 	opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.fade-enter-active,
+	.fade-leave-active {
+		transition-duration: 0.01ms;
+	}
 }
 </style>

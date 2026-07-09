@@ -1,8 +1,9 @@
 <template>
-	<div class="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
+	<main id="main-content" class="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-10">
 		<Head>
 			<Title>Login</Title>
 		</Head>
+		<a class="skip-link" href="#login-form">Skip to sign in</a>
 
 		<!-- ambient background -->
 		<div class="pointer-events-none absolute inset-0 -z-10">
@@ -17,7 +18,7 @@
 		<div class="absolute top-4 right-4">
 			<ClientOnly>
 				<UButton
-					:icon="isDark ? 'i-heroicons-moon-20-solid' : 'i-heroicons-sun-20-solid'"
+					:icon="isDark ? 'i-heroicons-sun-20-solid' : 'i-heroicons-moon-20-solid'"
 					color="neutral"
 					variant="ghost"
 					:aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
@@ -40,7 +41,11 @@
 				<p class="text-muted mt-1.5 text-sm">A faster way to manage your Cloudflare DNS records</p>
 			</div>
 
-			<div class="border-default bg-default/70 rounded-2xl border p-6 shadow-xl backdrop-blur">
+			<form
+				id="login-form"
+				class="border-default bg-default/80 rounded-2xl border p-6 shadow-xl backdrop-blur"
+				@submit.prevent="saveApiToken"
+			>
 				<label for="cf-api-key" class="text-highlighted mb-1.5 block text-sm font-medium">
 					Cloudflare API token
 				</label>
@@ -48,13 +53,15 @@
 					id="cf-api-key"
 					v-model="apiToken"
 					:type="showToken ? 'text' : 'password'"
-					autofocus
+					name="cloudflare-api-token"
+					autocomplete="off"
+					:spellcheck="false"
+					aria-describedby="cf-api-key-help"
 					size="lg"
 					icon="i-heroicons-key"
-					placeholder="Paste your API token"
+					placeholder="Paste your API token…"
 					class="w-full"
 					:ui="{ trailing: 'pe-1' }"
-					@keydown.enter="saveApiToken"
 				>
 					<template #trailing>
 						<UButton
@@ -62,23 +69,27 @@
 							color="neutral"
 							variant="ghost"
 							size="xs"
+							type="button"
 							:aria-label="showToken ? 'Hide token' : 'Show token'"
 							@click="showToken = !showToken"
 						/>
 					</template>
 				</UInput>
-				<p class="text-muted mt-2 text-xs">Stored only in your browser and sent directly to Cloudflare.</p>
+				<p id="cf-api-key-help" class="text-muted mt-2 text-xs">
+					Stored only in this browser. Requests pass through this server to Cloudflare without persisting your
+					token.
+				</p>
 
 				<UButton
 					color="primary"
 					size="lg"
 					block
+					type="submit"
 					class="mt-4"
 					trailing-icon="i-heroicons-arrow-right-20-solid"
 					:disabled="!apiToken.trim()"
-					@click="saveApiToken"
 				>
-					Continue
+					Open DNS Manager
 				</UButton>
 
 				<div class="text-dimmed my-5 flex items-center gap-3 text-xs">
@@ -88,7 +99,7 @@
 				</div>
 
 				<div class="border-default bg-elevated/40 rounded-xl border p-4">
-					<p class="text-highlighted text-sm font-medium">Quick setup</p>
+					<p class="text-highlighted text-sm font-medium">Quick Setup</p>
 					<p class="text-muted mt-1 text-xs">
 						Create a custom token for all accounts &amp; zones, then grant:
 					</p>
@@ -117,13 +128,13 @@
 						Open the Cloudflare token page
 					</UButton>
 				</div>
-			</div>
+			</form>
 
 			<p class="text-dimmed mt-6 text-center text-xs">
 				Some features depend on your Cloudflare plan, even with the right permissions.
 			</p>
 		</div>
-	</div>
+	</main>
 </template>
 
 <script setup>

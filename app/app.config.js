@@ -1,15 +1,19 @@
 export default defineAppConfig({
+	site: {
+		name: 'DNS Manager',
+		description: 'A focused control centre for Cloudflare DNS records.'
+	},
 	ui: {
 		colors: {
-			primary: 'blue',
+			primary: 'orange',
 			neutral: 'comet'
 		},
 		button: {
 			slots: {
-				base: 'rounded-lg'
+				base: 'rounded-lg font-medium'
 			},
 			defaultVariants: {
-				size: 'sm'
+				size: 'md'
 			}
 		},
 		input: {
@@ -34,12 +38,12 @@ export default defineAppConfig({
 		},
 		card: {
 			slots: {
-				root: 'rounded-lg'
+				root: 'rounded-xl'
 			}
 		},
 		modal: {
 			slots: {
-				content: 'rounded-lg'
+				content: 'rounded-xl overscroll-contain'
 			}
 		},
 		dropdownMenu: {

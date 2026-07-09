@@ -1,7 +1,7 @@
 import { computed, unref } from 'vue'
 
 export function useDynamicSeo({ title, description }) {
-	const site = useSiteConfig()
+	const { site } = useAppConfig()
 
 	const siteName = computed(() => site?.name || 'DNS Manager')
 	const siteDescription = computed(() => site?.description || '')

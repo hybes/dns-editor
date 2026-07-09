@@ -1,8 +1,11 @@
 <template>
 	<div
+		role="status"
+		aria-live="polite"
+		aria-busy="true"
 		:class="
 			fullscreen
-				? 'bg-muted/70 fixed top-0 left-0 z-50 flex h-screen w-screen items-center justify-center px-6 backdrop-blur-sm'
+				? 'bg-muted/80 fixed inset-0 z-50 flex min-h-dvh w-screen items-center justify-center px-6 backdrop-blur-sm'
 				: 'flex items-center justify-center px-6'
 		"
 	>
@@ -10,7 +13,8 @@
 			class="border-default bg-elevated/70 flex w-full max-w-xl flex-col items-center gap-4 rounded-xl border p-6 text-center shadow-sm"
 		>
 			<svg
-				class="text-primary h-12 w-12 animate-spin"
+				class="text-primary h-12 w-12 animate-spin motion-reduce:animate-none"
+				aria-hidden="true"
 				xmlns="http://www.w3.org/2000/svg"
 				width="32"
 				height="32"
