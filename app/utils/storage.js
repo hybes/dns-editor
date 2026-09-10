@@ -9,7 +9,9 @@ export const STORAGE_KEYS = {
 	accountId: 'cf-account-id',
 	accountName: 'cf-account-name',
 	zonesViewMode: 'zones-view-mode',
-	recentZones: 'cf-recent-zones'
+	recentZones: 'cf-recent-zones',
+	dnsLookupRecent: 'cf-dns-lookup-recent',
+	domainSearchTlds: 'cf-domain-search-tlds'
 }
 
 // Keys cleared on logout (everything that is not a per-record preset).
@@ -22,7 +24,8 @@ export const SESSION_KEYS = [
 	STORAGE_KEYS.accountId,
 	STORAGE_KEYS.accountName,
 	STORAGE_KEYS.zonesViewMode,
-	STORAGE_KEYS.recentZones
+	STORAGE_KEYS.recentZones,
+	STORAGE_KEYS.dnsLookupRecent
 ]
 
 export const PRESET_PREFIX = 'cf-dns-preset-'

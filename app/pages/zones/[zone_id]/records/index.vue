@@ -520,7 +520,7 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { getApiKey } = useSession()
-const { getRecordTypeColor, getRecordTypeIcon, formatContent } = useRecordTypes()
+const { getRecordTypeColor, getRecordTypeIcon, formatContent, getExpectedDnsValue } = useRecordTypes()
 const zoneId = computed(() => route.params.zone_id)
 const apiKey = ref('')
 const zoneName = ref('')
@@ -634,6 +634,14 @@ const moreNavItems = computed(() => {
 			icon: 'i-heroicons-arrow-up-tray',
 			onSelect: () => {
 				importModalOpen.value = true
+			}
+		},
+		{
+			label: 'DNS Lookup',
+			icon: 'i-heroicons-globe-alt',
+			to: {
+				path: '/tools/dns-lookup',
+				query: { name: zoneName.value || undefined, type: 'ALL', zone: zoneId.value }
 			}
 		}
 	]
@@ -977,6 +985,18 @@ const columnPickerItems = computed(() =>
 		}))
 )
 
+// Proxied records resolve to Cloudflare's edge, so only pass an expected value for
+// records the public answer should match verbatim.
+const propagationLink = (record) => {
+	const query = { name: record.name, type: record.type, zone: zoneId.value }
+	if (record.proxied) query.proxied = '1'
+	else {
+		const expected = getExpectedDnsValue(record)
+		if (expected) query.expected = expected
+	}
+	return { path: '/tools/propagation', query }
+}
+
 const items = (row) => {
 	return [
 		[
@@ -989,6 +1009,11 @@ const items = (row) => {
 				label: 'Copy value',
 				icon: 'i-clarity-clipboard-line',
 				onSelect: () => copyToClipboard(formatContent(row), 'Record value')
+			},
+			{
+				label: 'Check Propagation',
+				icon: 'i-heroicons-signal',
+				to: propagationLink(row)
 			},
 			{
 				label: 'Open',

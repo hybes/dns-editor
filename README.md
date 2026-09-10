@@ -25,6 +25,16 @@ Start the development server at `http://localhost:3000`:
 npm run dev
 ```
 
+## Tools
+
+Two utilities sit outside any zone and are reachable from the **Tools** menu in the header:
+
+- **DNS Lookup** (`/tools/dns-lookup`) queries Cloudflare's and Google's public resolvers over DNS-over-HTTPS and shows the answers side by side, with TTLs, DNSSEC validation and a resolvers-agree check. Entering an IP address runs a reverse lookup. A zone's "More Actions" menu opens the tool pre-filled with that zone.
+- **Propagation Check** (`/tools/propagation`) asks the zone's own nameservers and 15 public resolvers (Cloudflare, Google, Quad9, OpenDNS and others across several countries) for a record over plain DNS, then reports which resolvers already return the expected value or match the nameservers, how long stale caches have left, and whether the nameservers agree with each other. Every record row has a "Check Propagation" action that opens the tool pre-filled; proxied records compare against the nameservers because their public answer is Cloudflare's edge.
+- **Domain Search** (`/tools/domain-search`) checks whether a name is registered across a chosen set of endings using each registry's RDAP service (bootstrapped from IANA), falls back to a public-resolver NS query where a registry publishes no RDAP, shows Porkbun's public first-year price as a reference figure, and links to Cloudflare Registrar, Porkbun and Namecheap to buy. Names that already exist as zones on the token are flagged.
+
+These tools contact third-party services from this server: the resolvers, the relevant registry's RDAP endpoint, IANA and Porkbun receive only the names being looked up, never the Cloudflare token. The propagation check needs outbound UDP/TCP port 53 from wherever the app is hosted. Purchases always complete on the registrar's own site.
+
 ## Validation
 
 ```bash

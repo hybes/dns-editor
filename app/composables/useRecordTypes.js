@@ -70,12 +70,38 @@ export function useRecordTypes() {
 		return record.content || ''
 	}
 
+	// The value a public resolver should hand back for this record, in the shape the
+	// propagation checker compares against. Empty when the type has no simple form.
+	const getExpectedDnsValue = (record) => {
+		if (!record) return ''
+		switch (record.type) {
+			case 'A':
+			case 'AAAA':
+			case 'CNAME':
+			case 'NS':
+			case 'TXT':
+			case 'PTR':
+				return record.content || ''
+			case 'MX':
+				return record.content ? `${record.priority ?? 0} ${record.content}` : ''
+			case 'SRV':
+				return record.data?.target
+					? `${record.data.priority ?? 0} ${record.data.weight ?? 0} ${record.data.port ?? 0} ${record.data.target}`
+					: ''
+			case 'CAA':
+				return record.data?.tag ? `${record.data.flags ?? 0} ${record.data.tag} ${record.data.value ?? ''}` : ''
+			default:
+				return ''
+		}
+	}
+
 	return {
 		getRecordTypeColor,
 		getRecordTypeIcon,
 		getDnsTypeDescription,
 		getDnsTypeHelp,
 		formatContent,
+		getExpectedDnsValue,
 		CREATABLE_RECORD_TYPES
 	}
 }

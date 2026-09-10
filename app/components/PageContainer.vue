@@ -23,6 +23,18 @@
 				</NuxtLink>
 
 				<div class="flex shrink-0 items-center gap-2">
+					<UDropdownMenu v-if="hasApiKey" :items="toolItems" :content="{ align: 'end' }">
+						<UButton
+							color="neutral"
+							variant="ghost"
+							size="sm"
+							icon="i-heroicons-wrench-screwdriver"
+							trailing-icon="i-heroicons-chevron-down-20-solid"
+							aria-label="Tools"
+						>
+							<span class="hidden sm:inline">Tools</span>
+						</UButton>
+					</UDropdownMenu>
 					<ClientOnly v-if="showTheme">
 						<UButton
 							:icon="isDark ? 'i-heroicons-sun-20-solid' : 'i-heroicons-moon-20-solid'"
@@ -77,6 +89,12 @@ const headerClass = computed(() => {
 const { getApiKey, logout } = useSession()
 const isDark = useIsDark()
 const hasApiKey = ref(false)
+
+const toolItems = [
+	{ label: 'DNS Lookup', icon: 'i-heroicons-globe-alt', to: '/tools/dns-lookup' },
+	{ label: 'Propagation Check', icon: 'i-heroicons-signal', to: '/tools/propagation' },
+	{ label: 'Domain Search', icon: 'i-heroicons-shopping-cart', to: '/tools/domain-search' }
+]
 
 onMounted(() => {
 	hasApiKey.value = Boolean(getApiKey())
