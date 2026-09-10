@@ -15,27 +15,27 @@
 	"devDependencies": {
 		"@iconify-json/clarity": "^1.2.4",
 		"@iconify-json/heroicons": "^1.2.3",
-		"@iconify-json/lucide": "^1.2.116",
+		"@iconify-json/lucide": "^1.2.131",
 		"@tailwindcss/forms": "^0.5.11",
-		"@types/node": "^24.13.3",
+		"@types/node": "^24.13.4",
 		"cac": "6.7.14",
 		"commander": "13.1.0",
 		"crossws": "0.4.9",
-		"eslint": "^10.6.0",
+		"eslint": "^10.10.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-prettier": "^5.5.6",
 		"eslint-plugin-unused-imports": "^4.4.1",
-		"eslint-plugin-vue": "^10.9.2",
-		"nuxt": "^4.4.8",
-		"prettier": "^3.9.5",
-		"prettier-plugin-tailwindcss": "^0.8.0"
+		"eslint-plugin-vue": "^10.11.0",
+		"nuxt": "^4.5.2",
+		"prettier": "^3.9.6",
+		"prettier-plugin-tailwindcss": "^0.8.1"
 	},
 	"dependencies": {
-		"@nuxt/eslint": "^1.16.0",
-		"@nuxt/ui": "^4.9.0",
-		"@vueuse/core": "^14.3.0",
-		"openai": "^6.46.0",
-		"tailwindcss": "^4.3.2"
+		"@nuxt/eslint": "^1.17.0",
+		"@nuxt/ui": "^4.11.1",
+		"@vueuse/core": "^14.4.0",
+		"openai": "^6.49.0",
+		"tailwindcss": "^4.3.3"
 	},
 	"engines": {
 		"node": "^22.13.0 || ^24.11.0 || >=26.0.0"
