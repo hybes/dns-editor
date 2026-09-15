@@ -10,8 +10,9 @@ import { getTldPricing } from '../utils/domainPricing'
 // registrar, so each result carries deep links rather than an in-app checkout.
 
 const MAX_TLDS = 15
-const MAX_CANDIDATES = 16
 const CONCURRENCY = 6
+// How long prices may lag behind the registry checks before results go out without them.
+const PRICING_GRACE_MS = 1500
 
 // Cloudflare's register page has no search parameter, so the name must be pasted there.
 const CLOUDFLARE_REGISTER_URL = 'https://dash.cloudflare.com/?to=/:account/registrar/register'
@@ -48,18 +49,18 @@ const classify = ({ rdap, dns }) => {
 	return { availability: 'unknown', source: null, reason: rdap.reason || 'Could not determine availability.' }
 }
 
-const checkDomain = async (domain, pricing) => {
+const checkDomain = async (domain) => {
 	const [rdap, dns] = await Promise.all([
 		rdapDomain(domain),
 		dohQuery({ resolver: 'cloudflare', name: domain, type: 'NS' }).catch(() => ({ ok: false }))
 	])
 	const { tld } = splitDomain(domain)
-	const price = pricing?.byTld?.[tld] || null
 	return {
 		domain,
 		tld,
 		...classify({ rdap, dns }),
-		rdapSupported: Boolean(rdap.supported),
+		// null when the RDAP directory itself could not be loaded
+		rdapSupported: rdap.supported ?? null,
 		registrar: rdap.registrar || '',
 		registered: rdap.registered || '',
 		expires: rdap.expires || '',
@@ -70,12 +71,23 @@ const checkDomain = async (domain, pricing) => {
 				? dns.answers.filter((r) => r.type === 'NS').map((r) => r.data.replace(/\.$/, ''))
 				: [],
 		dnsStatus: dns?.ok ? dns.status : '',
-		price:
-			price && price.registration !== null
-				? { ...price, currency: pricing.currency, source: pricing.source }
-				: null,
 		links: buildLinks(domain)
 	}
+}
+
+const priceFor = (tld, pricing) => {
+	const price = pricing?.byTld?.[tld]
+	if (!price || price.registration === null) return null
+	return { ...price, currency: pricing.currency, source: pricing.source }
+}
+
+// Resolves to the promise's value, or null when it takes longer than ms.
+const withinGrace = (promise, ms) => {
+	let timer
+	const timeout = new Promise((resolve) => {
+		timer = setTimeout(() => resolve(null), ms)
+	})
+	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
 const runWithConcurrency = async (items, worker) => {
@@ -98,10 +110,10 @@ export default defineEventHandler(async (event) => {
 		const term = normaliseSearchTerm(body.query)
 		if (term.error) throw createError({ statusCode: 400, statusMessage: term.error })
 
-		const tlds = [...new Set((Array.isArray(body.tlds) ? body.tlds : []).map(normaliseTld).filter(Boolean))].slice(
-			0,
-			MAX_TLDS
-		)
+		const tlds = [...new Set((Array.isArray(body.tlds) ? body.tlds : []).map(normaliseTld).filter(Boolean))]
+		if (tlds.length > MAX_TLDS) {
+			throw createError({ statusCode: 400, statusMessage: `Choose up to ${MAX_TLDS} domain endings at a time.` })
+		}
 
 		// Registries only know registrable names, so a subdomain is reduced to its parent
 		// (shop.example.com → example.com) before anything is checked.
@@ -121,10 +133,13 @@ export default defineEventHandler(async (event) => {
 			})
 		}
 
-		const pricing = await getTldPricing()
-		const results = await runWithConcurrency(candidates.slice(0, MAX_CANDIDATES), (domain) =>
-			checkDomain(domain, pricing)
-		)
+		// Prices only decorate the results, so the list loads alongside the registry checks and
+		// gets a short grace period once they finish. A slower fetch carries on in the
+		// background and fills the cache for the next search.
+		const pricingPromise = getTldPricing()
+		const checked = await runWithConcurrency(candidates, checkDomain)
+		const pricing = await withinGrace(pricingPromise, PRICING_GRACE_MS)
+		const results = checked.map((item) => ({ ...item, price: priceFor(item.tld, pricing) }))
 
 		return {
 			success: true,
@@ -134,7 +149,6 @@ export default defineEventHandler(async (event) => {
 				exact,
 				reducedFrom,
 				results,
-				truncated: candidates.length > MAX_CANDIDATES,
 				pricing: pricing
 					? { source: pricing.source, currency: pricing.currency, fetchedAt: pricing.fetchedAt }
 					: null,

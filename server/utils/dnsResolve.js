@@ -1,10 +1,51 @@
 import { Resolver } from 'node:dns/promises'
+import { BlockList, isIP } from 'node:net'
 
 // Plain DNS (port 53) client on Node's c-ares resolver, so any recursive or
 // authoritative server can be asked directly. The propagation checker needs exactly
 // that: the same question put to many caches and to the zone's own nameservers.
 
-export const PROPAGATION_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'SRV', 'CAA', 'PTR']
+export const QUERY_TIMEOUT_MS = 4000
+
+// Ranges no public DNS server lives in. Anyone can publish NS records pointing at these,
+// and without the check a crafted domain would make this server probe its own network.
+// IPv4-mapped IPv6 addresses (::ffff:10.0.0.1) are matched against the IPv4 rules.
+// Benchmarking (198.18.0.0/15) is included because container runtimes, VPNs and fake-IP
+// DNS setups use it internally; 240.0.0.0/4 also covers the broadcast address.
+const INTERNAL_RANGES = new BlockList()
+for (const [network, prefix] of [
+	['0.0.0.0', 8],
+	['10.0.0.0', 8],
+	['100.64.0.0', 10],
+	['127.0.0.0', 8],
+	['169.254.0.0', 16],
+	['172.16.0.0', 12],
+	['192.0.0.0', 24],
+	['192.0.2.0', 24],
+	['192.168.0.0', 16],
+	['198.18.0.0', 15],
+	['198.51.100.0', 24],
+	['203.0.113.0', 24],
+	['224.0.0.0', 4],
+	['240.0.0.0', 4]
+]) {
+	INTERNAL_RANGES.addSubnet(network, prefix, 'ipv4')
+}
+for (const [network, prefix] of [
+	['::', 128],
+	['::1', 128],
+	['fc00::', 7],
+	['fe80::', 10]
+]) {
+	INTERNAL_RANGES.addSubnet(network, prefix, 'ipv6')
+}
+
+// Anything that is not a literal IP address is treated as internal too.
+export const isInternalAddress = (ip) => {
+	const version = isIP(String(ip || ''))
+	if (!version) return true
+	return INTERNAL_RANGES.check(ip, version === 4 ? 'ipv4' : 'ipv6')
+}
 
 // Public recursive resolvers that answered reliably when this list was assembled.
 // "region" is where the operator is based or whom the service is aimed at; the big
@@ -121,7 +162,17 @@ export const sameValues = (a, b) => a.length === b.length && a.every((value, ind
 
 // Ask one server for one record set. Never throws: transport and lookup failures
 // come back as a status so callers can tabulate them.
-export async function queryServer({ ip, name, type, timeoutMs = 4000 }) {
+export async function queryServer({ ip, name, type, timeoutMs = QUERY_TIMEOUT_MS }) {
+	if (isInternalAddress(ip)) {
+		return {
+			ok: false,
+			status: 'blocked',
+			values: [],
+			ttl: null,
+			durationMs: 0,
+			error: `${ip || 'This address'} is a private or internal address, so it was not queried`
+		}
+	}
 	const resolver = new Resolver({ timeout: timeoutMs, tries: 1 })
 	resolver.setServers([ip])
 	const startedAt = Date.now()

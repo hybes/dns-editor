@@ -1,25 +1,8 @@
+import { LOOKUP_RECORD_TYPES } from '#shared/utils/dnsTypes'
+
 // DNS-over-HTTPS (JSON) queries against public resolvers. Used by the DNS lookup tool
 // and, as a registration hint, by the domain search tool. No Cloudflare token is
 // involved: the only thing sent upstream is the name being queried.
-
-export const RECORD_TYPES = [
-	'A',
-	'AAAA',
-	'CNAME',
-	'MX',
-	'NS',
-	'TXT',
-	'SOA',
-	'SRV',
-	'CAA',
-	'PTR',
-	'DS',
-	'DNSKEY',
-	'HTTPS',
-	'SVCB',
-	'TLSA',
-	'NAPTR'
-]
 
 // Fanned out when the caller asks for "all common" records.
 export const COMMON_RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'CAA']
@@ -90,7 +73,7 @@ const mapRecords = (list) =>
 export async function dohQuery({ resolver = 'cloudflare', name, type = 'A', timeoutMs = 8000 }) {
 	const config = RESOLVERS[resolver]
 	if (!config) throw new Error(`Unknown resolver: ${resolver}`)
-	if (!RECORD_TYPES.includes(type)) throw new Error(`Unsupported record type: ${type}`)
+	if (!LOOKUP_RECORD_TYPES.includes(type)) throw new Error(`Unsupported record type: ${type}`)
 
 	const controller = new AbortController()
 	const timer = setTimeout(() => controller.abort(), timeoutMs)

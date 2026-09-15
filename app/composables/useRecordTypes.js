@@ -1,5 +1,5 @@
-// Shared lookup tables + formatting for DNS record types, previously duplicated
-// across the records list and the create/edit pages.
+// Shared lookup tables and formatting for DNS record types, used by the records table,
+// the record form and the lookup tools.
 
 const TYPE_COLORS = {
 	A: 'primary',
@@ -12,62 +12,64 @@ const TYPE_COLORS = {
 	CAA: 'neutral'
 }
 
-const TYPE_ICONS = {
-	A: 'heroicons:map-pin',
-	AAAA: 'heroicons:map-pin',
-	CNAME: 'heroicons:link',
-	MX: 'heroicons:envelope',
-	NS: 'heroicons:globe-alt',
-	SRV: 'heroicons:server-stack',
-	TXT: 'heroicons:document-text',
-	CAA: 'heroicons:shield-check'
-}
-
-const TYPE_DESCRIPTIONS = {
-	A: 'A Record: Maps a domain to an IPv4 address',
-	AAAA: 'AAAA Record: Maps a domain to an IPv6 address',
-	CNAME: 'CNAME Record: Creates an alias pointing to another domain',
-	MX: 'MX Record: Directs email to a mail server',
-	NS: 'NS Record: Delegates a subdomain to other name servers',
-	SRV: 'SRV Record: Maps services to specific servers and ports',
-	TXT: 'TXT Record: Stores text information for verification or other purposes',
-	CAA: 'CAA Record: Controls which certificate authorities may issue certificates'
-}
-
-const TYPE_HELP = {
-	A: 'Enter an IPv4 address like 192.168.1.1 in the Content field.',
-	AAAA: 'Enter an IPv6 address like 2606:4700::1 in the Content field.',
-	CNAME: 'Enter a domain name that this domain should point to.',
-	MX: 'Enter a mail server hostname and set the Priority (lower numbers have higher priority).',
-	NS: 'Enter the hostname of the name server to delegate to.',
-	SRV: 'Configure service location by specifying service, protocol, target server and port.',
-	TXT: 'Enter verification codes or other text-based information.',
-	CAA: 'Enter the CA domain (e.g. letsencrypt.org). Use the flags/tag for advanced control.'
-}
-
 // Record types this UI can create/edit through the simple form.
 export const CREATABLE_RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'SRV', 'TXT', 'CAA']
 
+const SHORT_TTL_UNITS = [
+	[86_400, 'day'],
+	[3_600, 'hr'],
+	[60, 'min']
+]
+
+const LONG_TTL_UNITS = [
+	[86_400, 'day'],
+	[3_600, 'hour'],
+	[60, 'minute'],
+	[1, 'second']
+]
+
+// SRV in zone-file order. Cloudflare's own content string leaves the priority out.
+const srvValue = (record) =>
+	record.data?.target
+		? `${record.data.priority ?? record.priority ?? 0} ${record.data.weight ?? 0} ${record.data.port ?? 0} ${record.data.target}`
+		: ''
+
 export function useRecordTypes() {
 	const getRecordTypeColor = (type) => TYPE_COLORS[type] || 'neutral'
-	const getRecordTypeIcon = (type) => TYPE_ICONS[type] || 'heroicons:circle-stack'
-	const getDnsTypeDescription = (type) => TYPE_DESCRIPTIONS[type] || `${type} Record`
-	const getDnsTypeHelp = (type) => TYPE_HELP[type] || 'Configure your DNS record settings below.'
 
-	// Human-friendly content string, handling SRV's structured data.
+	// The value as shown in lists and copied from them: Cloudflare's content, except SRV,
+	// which is shown as "priority weight port target".
 	const formatContent = (record) => {
-		if (record.type === 'SRV' && record.data) {
-			if (record.name && record.name.includes('_minecraft._tcp')) {
-				const domainPart = record.name.split('_minecraft._tcp.')[1]
-				if (domainPart) return `${domainPart} → ${record.data.target}:${record.data.port}`
+		if (!record) return ''
+		if (record.type === 'SRV') return srvValue(record) || record.content || ''
+		return record.content || ''
+	}
+
+	// The only TTL formatter, so a TTL reads the same everywhere. 1 means Cloudflare picks it.
+	// short: '5 min', '1 hr', '2 days' (tables). long: '1 hour 30 minutes' (forms and details).
+	// Returns '' for anything that isn't a positive number.
+	const formatTtl = (ttl, { style = 'short' } = {}) => {
+		const seconds = Number(ttl)
+		if (!Number.isFinite(seconds) || seconds <= 0) return ''
+		if (seconds === 1) return 'Auto'
+		if (style === 'long') {
+			let rest = seconds
+			const parts = []
+			for (const [size, unit] of LONG_TTL_UNITS) {
+				const count = Math.floor(rest / size)
+				if (!count) continue
+				parts.push(`${count} ${unit}${count === 1 ? '' : 's'}`)
+				rest -= count * size
 			}
-			if (record.data.target && record.data.port) {
-				return `➡️ ${record.data.target}:${record.data.port}${
-					record.data.weight ? ` (Weight: ${record.data.weight})` : ''
-				}`
+			return parts.join(' ')
+		}
+		for (const [size, unit] of SHORT_TTL_UNITS) {
+			if (seconds >= size && seconds % size === 0) {
+				const count = seconds / size
+				return `${count} ${unit}${unit === 'day' && count !== 1 ? 's' : ''}`
 			}
 		}
-		return record.content || ''
+		return `${seconds} sec`
 	}
 
 	// The value a public resolver should hand back for this record, in the shape the
@@ -85,9 +87,7 @@ export function useRecordTypes() {
 			case 'MX':
 				return record.content ? `${record.priority ?? 0} ${record.content}` : ''
 			case 'SRV':
-				return record.data?.target
-					? `${record.data.priority ?? 0} ${record.data.weight ?? 0} ${record.data.port ?? 0} ${record.data.target}`
-					: ''
+				return srvValue(record)
 			case 'CAA':
 				return record.data?.tag ? `${record.data.flags ?? 0} ${record.data.tag} ${record.data.value ?? ''}` : ''
 			default:
@@ -97,11 +97,8 @@ export function useRecordTypes() {
 
 	return {
 		getRecordTypeColor,
-		getRecordTypeIcon,
-		getDnsTypeDescription,
-		getDnsTypeHelp,
 		formatContent,
-		getExpectedDnsValue,
-		CREATABLE_RECORD_TYPES
+		formatTtl,
+		getExpectedDnsValue
 	}
 }

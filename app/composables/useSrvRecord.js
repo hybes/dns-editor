@@ -1,152 +1,44 @@
-// All SRV-record helper logic in one place. Previously this (commonServices,
-// loadSrvPreset, updateSrvFromSimple, getSrvFullName, detectServiceType, display
-// formatting) was copy-pasted across the create and edit pages.
-
-export const COMMON_SERVICES = [
-	{ label: 'SIP (Voice/Video)', value: '_sip._tcp' },
-	{ label: 'XMPP (Chat)', value: '_xmpp-server._tcp' },
-	{ label: 'LDAP (Directory)', value: '_ldap._tcp' },
-	{ label: 'IMAP (Email)', value: '_imap._tcp' },
-	{ label: 'SMTP (Email)', value: '_smtp._tcp' },
-	{ label: 'Minecraft', value: '_minecraft._tcp' },
-	{ label: 'TeamSpeak', value: '_ts3._udp' },
-	{ label: 'Custom', value: 'custom' }
+// Well-known SRV services with the port each one conventionally uses.
+const SERVICES = [
+	{ label: 'SIP over TCP', value: '_sip._tcp', port: 5060 },
+	{ label: 'SIP over UDP', value: '_sip._udp', port: 5060 },
+	{ label: 'SIP over TLS', value: '_sips._tcp', port: 5061 },
+	{ label: 'XMPP client', value: '_xmpp-client._tcp', port: 5222 },
+	{ label: 'XMPP server', value: '_xmpp-server._tcp', port: 5269 },
+	{ label: 'LDAP', value: '_ldap._tcp', port: 389 },
+	{ label: 'IMAP', value: '_imap._tcp', port: 143 },
+	{ label: 'IMAPS', value: '_imaps._tcp', port: 993 },
+	{ label: 'SMTP', value: '_smtp._tcp', port: 25 },
+	{ label: 'Mail submission', value: '_submission._tcp', port: 587 },
+	{ label: 'Minecraft', value: '_minecraft._tcp', port: 25565 },
+	{ label: 'TeamSpeak 3', value: '_ts3._udp', port: 9987 }
 ]
 
-export const SRV_QUICK_PRESETS = [
-	{ label: 'SIP', serviceProto: '_sip._tcp', port: 5060, color: 'primary' },
-	{ label: 'XMPP', serviceProto: '_xmpp-server._tcp', port: 5269, color: 'primary' },
-	{ label: 'LDAP', serviceProto: '_ldap._tcp', port: 389, color: 'primary' },
-	{ label: 'IMAP', serviceProto: '_imap._tcp', port: 143, color: 'primary' },
-	{ label: 'SMTP', serviceProto: '_smtp._tcp', port: 25, color: 'primary' },
-	{ label: 'Minecraft', serviceProto: '_minecraft._tcp', port: 25565, color: 'success' }
-]
+const PROTOCOLS = ['_tcp', '_udp', '_tls']
 
 const withUnderscore = (value) => {
-	const str = String(value || '')
-	return str.startsWith('_') ? str : `_${str}`
+	const text = String(value ?? '').trim()
+	return !text || text.startsWith('_') ? text : `_${text}`
 }
 
+// SRV names are `_service._proto.host`. Cloudflare only accepts that full name, so the form
+// builds it once here and shows the same string it sends.
 export function useSrvRecord() {
-	// Structured SRV fields. service is stored with a leading underscore, proto without
-	// one, matching how Cloudflare returns them; getFullName() normalises on the way out.
-	const srvData = ref({ service: '', proto: '', name: '', target: '', port: '', priority: 1, weight: 10 })
-	const advancedSrvMode = ref(false)
-	const srvSimpleService = ref('')
+	// The host must already include the zone (or be empty to let Cloudflare add it).
+	const buildName = ({ service, protocol }, host) =>
+		[withUnderscore(service), withUnderscore(protocol), host].filter(Boolean).join('.')
 
-	const reset = () => {
-		srvData.value = { service: '', proto: '', name: '', target: '', port: '', priority: 1, weight: 10 }
-		advancedSrvMode.value = false
-		srvSimpleService.value = ''
-	}
-
-	const loadQuickPreset = (serviceProto, port) => {
-		const [service, proto] = serviceProto.split('.')
-		srvData.value.service = service
-		srvData.value.proto = proto.replace(/^_/, '')
-		srvData.value.port = port
-		srvData.value.priority = srvData.value.priority || 1
-		srvData.value.weight = srvData.value.weight || 10
-		srvSimpleService.value = serviceProto
-	}
-
-	const updateFromSimple = () => {
-		if (srvSimpleService.value === 'custom') {
-			advancedSrvMode.value = true
-			return
+	const parseName = (fullName) => {
+		const name = String(fullName || '')
+		const labels = name.split('.')
+		if (labels.length >= 2 && labels[0].startsWith('_') && labels[1].startsWith('_')) {
+			return { service: labels[0], protocol: labels[1], host: labels.slice(2).join('.') }
 		}
-		const [service, proto] = srvSimpleService.value.split('.')
-		srvData.value.service = service
-		srvData.value.proto = proto.replace(/^_/, '')
+		return { service: '', protocol: '', host: name }
 	}
 
-	// Build the technical _service._proto.name string Cloudflare expects.
-	const getFullName = () => {
-		const { service, proto, name } = srvData.value
-		if (!service || !proto || !name) return ''
-		let host = name
-		if (service === '_minecraft' && proto === 'tcp' && host.startsWith('mc.')) {
-			host = host.substring(3)
-		}
-		return `${withUnderscore(service)}.${withUnderscore(proto)}.${host}`
-	}
+	const findService = ({ service, protocol }) =>
+		SERVICES.find((item) => item.value === `${withUnderscore(service)}.${withUnderscore(protocol)}`) || null
 
-	// Friendly label for headings, e.g. "sip.tcp.example.com" or the Minecraft arrow form.
-	const getDisplayName = () => {
-		const { service, proto, name, target, port } = srvData.value
-		if (!service || !proto || !name) return ''
-		if (service === '_minecraft' && proto === 'tcp') {
-			return `${name} → ${target}:${port || '25565'}`
-		}
-		return `${String(service).replace(/_/g, '')}.${proto}.${name}`
-	}
-
-	// Populate state from an existing Cloudflare record (edit flow).
-	// IMPORTANT: parse service/proto/host from the top-level record.name (the full
-	// `_service._proto.host` FQDN). Cloudflare's structured `data.name` is NOT a bare
-	// host, so using it directly would make getFullName() double-prefix on save.
-	const loadFromRecord = (record) => {
-		const data = record?.data || {}
-		const fullName = record?.name || ''
-		if (fullName.includes('._')) {
-			const parts = fullName.split('.')
-			const serviceParts = parts.filter((p) => p.startsWith('_'))
-			srvData.value = {
-				service: serviceParts[0] || withUnderscore(data.service || ''),
-				proto: (serviceParts[1] || `_${data.proto || ''}`).replace(/^_/, ''),
-				name: parts.slice(serviceParts.length).join('.'),
-				target: data.target || '',
-				port: data.port ?? '',
-				priority: data.priority ?? 1,
-				weight: data.weight ?? 10
-			}
-		} else if (data.service && data.proto) {
-			srvData.value = {
-				service: withUnderscore(data.service),
-				proto: String(data.proto).replace(/^_/, ''),
-				name: data.name || '',
-				target: data.target || '',
-				port: data.port ?? '',
-				priority: data.priority ?? 1,
-				weight: data.weight ?? 10
-			}
-		}
-
-		const serviceProto = `${srvData.value.service}._${srvData.value.proto}`
-		const found = COMMON_SERVICES.find((s) => s.value === serviceProto)
-		if (found) {
-			srvSimpleService.value = found.value
-		} else {
-			srvSimpleService.value = 'custom'
-			advancedSrvMode.value = true
-		}
-	}
-
-	const isValid = () => {
-		const port = Number(srvData.value.port)
-		const hasValidPort =
-			srvData.value.port !== '' &&
-			srvData.value.port !== null &&
-			Number.isInteger(port) &&
-			port >= 0 &&
-			port <= 65535
-		return Boolean(
-			srvData.value.service && srvData.value.proto && srvData.value.name && srvData.value.target && hasValidPort
-		)
-	}
-
-	return {
-		srvData,
-		advancedSrvMode,
-		srvSimpleService,
-		commonServices: COMMON_SERVICES,
-		quickPresets: SRV_QUICK_PRESETS,
-		reset,
-		loadQuickPreset,
-		updateFromSimple,
-		getFullName,
-		getDisplayName,
-		loadFromRecord,
-		isValid
-	}
+	return { services: SERVICES, protocols: PROTOCOLS, withUnderscore, buildName, parseName, findService }
 }

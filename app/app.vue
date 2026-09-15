@@ -1,33 +1,20 @@
 <template>
 	<UApp>
 		<NuxtRouteAnnouncer />
-		<div class="relative min-h-dvh">
-			<div v-if="appBootLoading">
-				<Loader
-					fullscreen
-					title="Preparing Cloudflare DNS Editor"
-					subtitle="Checking your API key and restoring your session…"
-					:hints="[
-						'If this takes longer than a few seconds, check your API key is still valid.',
-						'Ensure your token has permission to read zones and manage DNS.'
-					]"
-				/>
-			</div>
-
-			<div v-show="!appBootLoading" :inert="appBootLoading" :aria-hidden="appBootLoading ? 'true' : undefined">
-				<NuxtPage />
-			</div>
-		</div>
+		<NuxtLoadingIndicator color="var(--ui-primary)" :height="2" />
+		<NuxtLayout>
+			<NuxtPage />
+		</NuxtLayout>
 	</UApp>
 </template>
 
 <script setup>
-// The global auth middleware (~/middleware/auth.global.js) owns the redirect to
-// /login when no API key is present, so app boot only needs to release the splash.
-const appBootLoading = useState('appBootLoading', () => true)
+// The global auth middleware (~/middleware/auth.global.js) redirects to /login when no
+// token is stored. With client-side rendering it runs before the first page renders.
 const colorMode = useColorMode()
 
 useHead(() => ({
+	titleTemplate: (title) => (title ? `${title} · DNS Manager` : 'DNS Manager'),
 	meta: [
 		{
 			name: 'theme-color',
@@ -35,28 +22,4 @@ useHead(() => ({
 		}
 	]
 }))
-
-onMounted(() => {
-	appBootLoading.value = false
-})
 </script>
-
-<style>
-.fade-enter-active,
-.fade-leave-active {
-	opacity: 1;
-	transition: opacity 0.2s cubic-bezier(0.33, 1, 0.68, 1);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-	opacity: 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.fade-enter-active,
-	.fade-leave-active {
-		transition-duration: 0.01ms;
-	}
-}
-</style>

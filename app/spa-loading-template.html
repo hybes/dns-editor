@@ -1,0 +1,32 @@
+<div class="spa-loading" role="status" aria-live="polite">
+	<img src="/favicon.svg" alt="" width="32" height="32" />
+	<span>Loading DNS Manager…</span>
+</div>
+<style>
+	.spa-loading {
+		position: fixed;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		font:
+			500 14px/1.4 ui-sans-serif,
+			system-ui,
+			-apple-system,
+			sans-serif;
+		color: #505b6d;
+		background: #fbfcfd;
+	}
+	html.dark .spa-loading {
+		color: #9099a8;
+		background: #10141a;
+	}
+	@media (prefers-color-scheme: dark) {
+		html:not(.light) .spa-loading {
+			color: #9099a8;
+			background: #10141a;
+		}
+	}
+</style>

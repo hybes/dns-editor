@@ -1,447 +1,314 @@
 <template>
-	<Loader
-		v-if="loading && !appBootLoading"
-		fullscreen
-		title="Loading Your Zones"
-		subtitle="Fetching your zone list from Cloudflare…"
-	/>
+	<UDashboardPanel id="zones">
+		<template #header>
+			<UDashboardNavbar title="Zones">
+				<template #leading>
+					<UDashboardSidebarCollapse />
+				</template>
+				<template #right>
+					<UButton
+						icon="i-lucide-refresh-cw"
+						label="Reload"
+						color="neutral"
+						variant="outline"
+						:loading="loading"
+						@click="reload"
+					/>
+				</template>
+			</UDashboardNavbar>
 
-	<PageContainer v-else>
-		<Head>
-			<Title>Zones</Title>
-		</Head>
-
-		<section aria-labelledby="zones-title" class="mx-auto w-full max-w-7xl">
-			<header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-				<div>
-					<div class="flex items-center gap-3">
-						<div
-							class="bg-primary/10 ring-primary/20 flex h-11 w-11 items-center justify-center rounded-xl ring-1"
+			<UDashboardToolbar>
+				<div class="flex w-full items-center gap-3">
+					<UFormField
+						label="Search zones"
+						class="min-w-0 flex-1 sm:max-w-80"
+						:ui="{ labelWrapper: 'sr-only', container: 'mt-0' }"
+					>
+						<UInput
+							ref="searchInput"
+							v-model="search"
+							name="zone-search"
+							icon="i-lucide-search"
+							placeholder="Search zones"
+							autocomplete="off"
+							:spellcheck="false"
+							enterkeyhint="go"
+							class="w-full"
+							:ui="{ trailing: 'pe-1' }"
+							@keydown.enter="openOnlyMatch"
 						>
-							<UIcon name="i-heroicons-globe-alt" class="text-primary h-6 w-6" aria-hidden="true" />
-						</div>
-						<div>
-							<p class="text-primary text-xs font-semibold tracking-wide uppercase">Workspace</p>
-							<h1
-								id="zones-title"
-								class="text-highlighted text-2xl font-semibold tracking-tight sm:text-3xl"
-							>
-								Your Zones
-							</h1>
-						</div>
-					</div>
-					<p class="text-muted mt-3 max-w-2xl text-sm">
-						Choose a Cloudflare zone to inspect and manage its DNS records.
+							<template #trailing>
+								<UButton
+									v-if="search"
+									icon="i-lucide-x"
+									color="neutral"
+									variant="link"
+									size="sm"
+									aria-label="Clear search"
+									@click="clearSearch"
+								/>
+								<UKbd v-else value="/" class="hidden sm:inline-flex" />
+							</template>
+						</UInput>
+					</UFormField>
+					<p v-if="loaded" class="text-muted shrink-0 text-sm tabular-nums" aria-live="polite">
+						{{ countLabel }}
 					</p>
 				</div>
-				<CapabilityIndicator :missing-items="capabilityMissing" />
-			</header>
+			</UDashboardToolbar>
+		</template>
 
-			<div class="surface-panel overflow-hidden">
-				<div class="border-default space-y-4 border-b px-4 py-5 sm:px-6">
-					<div v-if="recentZones.length">
-						<p class="text-muted mb-2 text-xs font-semibold tracking-wide uppercase">Recent Zones</p>
-						<nav class="flex flex-wrap gap-2" aria-label="Recent zones">
-							<UButton
-								v-for="zone in recentZones"
-								:key="zone.id"
-								:to="`/zones/${zone.id}/records`"
-								size="sm"
-								variant="soft"
-								color="neutral"
-								icon="i-heroicons-clock"
-								@click="prepareZone(zone)"
-							>
-								{{ zone.name }}
-							</UButton>
-						</nav>
-					</div>
+		<template #body>
+			<UAlert
+				v-if="error"
+				color="error"
+				variant="subtle"
+				icon="i-lucide-circle-alert"
+				:title="zones.length ? 'Couldn’t refresh zones' : 'Couldn’t load zones'"
+				:actions="[
+					{
+						label: 'Try again',
+						icon: 'i-lucide-refresh-cw',
+						color: 'neutral',
+						variant: 'outline',
+						loading,
+						onClick: reload
+					}
+				]"
+			>
+				<template #description>
+					{{ error }}
+					<template v-if="zones.length"> The list below is from the last successful load.</template>
+				</template>
+			</UAlert>
 
-					<div>
-						<label for="zone-search" class="text-highlighted mb-1.5 block text-sm font-medium"
-							>Search Zones</label
+			<UTable
+				v-if="!error || zones.length"
+				:data="filteredZones"
+				:columns="columns"
+				:loading="loading || !loaded"
+				:meta="TABLE_META"
+				caption="Zones"
+				:ui="{ td: 'py-3' }"
+			>
+				<template #name-cell="{ row }">
+					<div class="min-w-0">
+						<!-- The link stretches over the whole row, so the row opens the zone and keeps real link behaviour. -->
+						<NuxtLink
+							:to="recordsPath(row.original)"
+							class="text-highlighted focus-visible:outline-primary rounded-sm font-medium wrap-anywhere after:absolute after:inset-0 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
 						>
-						<div class="relative">
-							<UTooltip text="Press / to search">
-								<UInput
-									id="zone-search"
-									ref="searchInput"
-									v-model="searchQuery"
-									name="zone-search"
-									autocomplete="off"
-									:spellcheck="false"
-									icon="i-heroicons-magnifying-glass-20-solid"
-									type="search"
-									placeholder="Search by domain or status…"
-									color="neutral"
-									class="w-full transition-shadow focus-within:shadow-md"
-									size="lg"
-									:ui="{ base: 'pe-11' }"
-									@focus="focusSearchInput"
-								/>
-							</UTooltip>
-							<UButton
-								v-if="searchQuery"
-								variant="ghost"
-								color="neutral"
-								size="xs"
-								icon="i-heroicons-x-mark-20-solid"
-								aria-label="Clear zone search"
-								class="absolute top-1.5 right-1.5"
-								@click="searchQuery = ''"
+							{{ row.original.name }}
+						</NuxtLink>
+						<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
+							<UBadge
+								v-for="badge in statusBadges(row.original)"
+								:key="badge.label"
+								v-bind="badge"
+								size="sm"
 							/>
+							<span class="text-muted text-sm">{{ planLabel(row.original) }}</span>
+							<span v-if="hasSeveralAccounts" class="text-muted text-sm wrap-anywhere">
+								{{ row.original.account?.name }}
+							</span>
 						</div>
 					</div>
-				</div>
+				</template>
 
-				<div class="px-4 py-5 sm:px-6">
-					<UAlert
-						v-if="loadError"
-						color="error"
-						variant="subtle"
-						icon="i-heroicons-exclamation-triangle"
-						title="Couldn’t Load Zones"
-						:description="loadError"
-						class="mb-5"
-					>
-						<template #actions>
-							<UButton
-								color="error"
-								variant="soft"
-								size="sm"
-								:loading="loading"
-								@click="getZones({ preferCache: false })"
-							>
-								Try Again
-							</UButton>
-						</template>
-					</UAlert>
+				<template #status-cell="{ row }">
+					<div class="flex items-center gap-1.5">
+						<UBadge v-for="badge in statusBadges(row.original)" :key="badge.label" v-bind="badge" />
+					</div>
+				</template>
 
-					<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-						<p class="text-muted text-sm tabular-nums">
-							{{ filteredZones.length }} of {{ zones.length }} zones
-						</p>
-						<div class="bg-muted flex items-center gap-1 rounded-lg p-1" aria-label="Zone view">
-							<UButton
-								size="sm"
-								:variant="viewMode === 'grid' ? 'soft' : 'ghost'"
-								:color="viewMode === 'grid' ? 'primary' : 'neutral'"
-								icon="i-heroicons-squares-2x2"
-								:aria-pressed="viewMode === 'grid'"
-								@click="viewMode = 'grid'"
-							>
-								Grid
-							</UButton>
-							<UButton
-								size="sm"
-								:variant="viewMode === 'table' ? 'soft' : 'ghost'"
-								:color="viewMode === 'table' ? 'primary' : 'neutral'"
-								icon="i-heroicons-table-cells"
-								:aria-pressed="viewMode === 'table'"
-								@click="viewMode = 'table'"
-							>
-								Table
-							</UButton>
+				<template #plan-cell="{ row }">
+					{{ planLabel(row.original) }}
+				</template>
+
+				<template #account-cell="{ row }">
+					<span class="block max-w-64 truncate" :title="row.original.account?.name">
+						{{ row.original.account?.name || '—' }}
+					</span>
+				</template>
+
+				<template #open-cell>
+					<UIcon name="i-lucide-chevron-right" class="text-dimmed block size-4" />
+				</template>
+
+				<template #loading>
+					<div v-if="!loaded" class="flex flex-col gap-4 text-start">
+						<span role="status" class="sr-only">Loading zones</span>
+						<div v-for="n in 6" :key="n" class="flex items-center gap-6">
+							<USkeleton class="h-4 w-full max-w-56" />
+							<USkeleton class="hidden h-5 w-16 sm:block" />
+							<USkeleton class="hidden h-4 w-28 sm:block" />
 						</div>
 					</div>
+					<UEmpty v-else variant="naked" v-bind="emptyState" />
+				</template>
 
-					<div
-						v-if="!filteredZones.length && !loadError"
-						class="flex flex-col items-center py-12 text-center"
-					>
-						<div class="bg-muted mb-3 flex h-12 w-12 items-center justify-center rounded-full">
-							<UIcon name="i-heroicons-globe-alt" class="text-muted h-6 w-6" aria-hidden="true" />
-						</div>
-						<h2 class="text-highlighted font-semibold">
-							{{ searchQuery ? 'No Matching Zones' : 'No Zones Found' }}
-						</h2>
-						<p class="text-muted mt-1 max-w-md text-sm">
-							{{
-								searchQuery
-									? 'Try a different domain or clear the search.'
-									: 'This API token cannot access any zones.'
-							}}
-						</p>
-						<UButton
-							v-if="searchQuery"
-							class="mt-4"
-							variant="soft"
-							color="neutral"
-							@click="searchQuery = ''"
-						>
-							Clear Search
-						</UButton>
-					</div>
-
-					<div v-else-if="viewMode === 'grid'" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-						<article
-							v-for="zone in filteredZones"
-							:key="zone.id"
-							class="border-default bg-default hover:border-primary/40 flex min-w-0 flex-col gap-4 rounded-xl border p-4 transition-colors"
-						>
-							<div class="flex min-w-0 items-start justify-between gap-3">
-								<div class="min-w-0">
-									<div class="flex min-w-0 items-center gap-2">
-										<UIcon
-											name="i-heroicons-globe-alt"
-											class="text-primary h-5 w-5 shrink-0"
-											aria-hidden="true"
-										/>
-										<h2 class="text-highlighted truncate font-semibold">{{ zone.name }}</h2>
-									</div>
-									<p class="text-dimmed mt-1 truncate font-mono text-xs" :title="zone.id">
-										{{ zone.id }}
-									</p>
-								</div>
-								<UBadge
-									:color="zone.status === 'active' ? 'success' : 'warning'"
-									variant="subtle"
-									class="shrink-0 capitalize"
-								>
-									{{ zone.status }}
-								</UBadge>
-							</div>
-							<UButton
-								:to="`/zones/${zone.id}/records`"
-								color="primary"
-								variant="soft"
-								icon="i-heroicons-arrow-right-20-solid"
-								trailing
-								block
-								@click="prepareZone(zone)"
-							>
-								Manage Records
-							</UButton>
-						</article>
-					</div>
-
-					<div v-else class="border-default w-full overflow-x-auto rounded-lg border">
-						<UTable
-							:data="filteredZones"
-							:columns="columns"
-							:loading="loading"
-							:ui="{ tr: { base: 'hover:bg-muted/70' } }"
-						>
-							<template #name-cell="{ row }">
-								<div class="flex min-w-48 items-center gap-3">
-									<UIcon
-										name="i-heroicons-globe-alt"
-										class="text-primary h-5 w-5 shrink-0"
-										aria-hidden="true"
-									/>
-									<div class="min-w-0">
-										<div class="text-highlighted truncate font-medium">{{ row.original.name }}</div>
-										<div class="text-dimmed truncate font-mono text-xs">{{ row.original.id }}</div>
-									</div>
-								</div>
-							</template>
-							<template #status-cell="{ row }">
-								<UBadge
-									:color="row.original.status === 'active' ? 'success' : 'warning'"
-									variant="subtle"
-									class="capitalize"
-								>
-									{{ row.original.status }}
-								</UBadge>
-							</template>
-							<template #actions-cell="{ row }">
-								<UButton
-									:to="`/zones/${row.original.id}/records`"
-									color="primary"
-									variant="soft"
-									size="sm"
-									icon="i-heroicons-arrow-right-20-solid"
-									@click="prepareZone(row.original)"
-								>
-									Manage Records
-								</UButton>
-							</template>
-						</UTable>
-					</div>
-				</div>
-			</div>
-		</section>
-	</PageContainer>
+				<template #empty>
+					<UEmpty variant="naked" v-bind="emptyState" />
+				</template>
+			</UTable>
+		</template>
+	</UDashboardPanel>
 </template>
 
 <script setup>
 import { useDebounceFn } from '@vueuse/core'
+import { API_TOKENS_URL } from '#shared/utils/cloudflare'
 
-const appBootLoading = useState('appBootLoading')
-const { getApiKey } = useSession()
+useSeoMeta({ title: 'Zones' })
+
+// Tailwind only generates classes it finds written out in full, so these stay literal.
+const FROM_SM = { class: { th: 'hidden sm:table-cell', td: 'hidden sm:table-cell' } }
+const FROM_MD = { class: { th: 'hidden md:table-cell', td: 'hidden md:table-cell' } }
+const TABLE_META = { class: { tr: 'relative hover:bg-elevated/50 has-[a:focus-visible]:bg-elevated/50' } }
+
 const route = useRoute()
 const router = useRouter()
-const toast = useToast()
-const apiKey = ref('')
-const zones = ref([])
-const loading = ref(true)
-const loadError = ref('')
-const searchInput = ref(null)
-const searchQuery = ref(typeof route.query.search === 'string' ? route.query.search : '')
-const capabilityMissing = ref([])
-const viewMode = ref(route.query.view === 'table' ? 'table' : 'grid')
-const recentZones = ref([])
-const zonesCacheTtl = 30000
-const zonesCache = useState('zones-cache', () => ({}))
-const zonesRequestBody = computed(() => ({ apiKey: apiKey.value }))
-const {
-	data: zonesData,
-	error: zonesError,
-	refresh: refreshZones
-} = useFetch('/api/zones', {
-	method: 'POST',
-	body: zonesRequestBody,
-	server: false,
-	immediate: false
+const { zones, loading, error, loaded, load } = useZones()
+
+onMounted(() => {
+	load()
 })
 
-const columns = [
-	{ id: 'name', accessorKey: 'name', header: 'Domain' },
-	{ id: 'status', accessorKey: 'status', header: 'Status' },
-	{ id: 'actions', header: 'Actions', enableSorting: false }
-]
+const reload = () => load({ force: true })
 
-const getZonesCacheKey = () => apiKey.value
-const readZonesCache = () => zonesCache.value[getZonesCacheKey()]
-const writeZonesCache = (items) => {
-	if (!apiKey.value) return
-	zonesCache.value[getZonesCacheKey()] = {
-		zones: items,
-		fetchedAt: Date.now()
+const recordsPath = (zone) => `/zones/${zone.id}/records`
+
+const statusBadges = (zone) => {
+	const badges = [{ ...zoneStatusBadge(zone.status), variant: 'subtle' }]
+	if (zone.paused) badges.push({ label: 'Paused', color: 'neutral', variant: 'outline' })
+	return badges
+}
+
+const planLabel = (zone) => [zone.plan?.name, SETUP_LABELS[zone.type]?.short].filter(Boolean).join(' · ') || '—'
+
+const hasSeveralAccounts = computed(() => new Set(zones.value.map((zone) => zone.account?.id).filter(Boolean)).size > 1)
+
+const columns = computed(() => [
+	{ id: 'name', accessorKey: 'name', header: 'Domain', meta: { class: { td: 'whitespace-normal' } } },
+	{ id: 'status', accessorKey: 'status', header: 'Status', meta: FROM_SM },
+	{ id: 'plan', header: 'Plan', meta: FROM_SM },
+	...(hasSeveralAccounts.value ? [{ id: 'account', header: 'Account', meta: FROM_MD }] : []),
+	{ id: 'open', header: '', meta: { class: { th: 'w-px', td: 'w-px ps-0' } } }
+])
+
+// Search
+
+const searchInput = useTemplateRef('searchInput')
+const pagePath = route.path
+const queryValue = () => (typeof route.query.search === 'string' ? route.query.search : '')
+const search = ref(queryValue())
+let syncedSearch = search.value.trim()
+
+// replace() keeps typing out of the history. A late update is dropped once the page is
+// navigating away, so it can't rewrite the next page's query.
+const writeQuery = useDebounceFn((value) => {
+	if (router.currentRoute.value.path !== pagePath) return
+	syncedSearch = value
+	const { search: _previous, ...rest } = route.query
+	router.replace({ query: value ? { ...rest, search: value } : rest })
+}, 250)
+
+watch(search, (value) => writeQuery(value.trim()))
+
+// Follow a ?search set from elsewhere without undoing typing that hasn't synced yet.
+watch(
+	() => route.query.search,
+	() => {
+		if (route.path !== pagePath) return
+		const value = queryValue()
+		if (value === syncedSearch) return
+		syncedSearch = value
+		search.value = value
 	}
+)
+
+const focusSearch = () => {
+	const input = searchInput.value?.inputRef
+	input?.focus()
+	// Selecting only for the shortcut means clicking into the field never wipes the query.
+	input?.select()
 }
 
-// Function to focus and select text in search input
-const focusSearchInput = () => {
-	setTimeout(() => {
-		const input = document.getElementById('zone-search')
-		if (input) {
-			input.select()
+const clearSearch = () => {
+	search.value = ''
+	searchInput.value?.inputRef?.focus()
+}
+
+defineShortcuts({
+	'/': focusSearch,
+	escape: {
+		usingInput: 'zone-search',
+		handler: () => {
+			if (search.value) search.value = ''
+			else searchInput.value?.inputRef?.blur()
 		}
-	}, 100)
-}
+	}
+})
 
-// Filtered zones based on search query
+const term = computed(() => search.value.trim().toLowerCase())
+
 const filteredZones = computed(() => {
-	if (!searchQuery.value) return zones.value
-
-	const query = searchQuery.value.trim().toLowerCase()
-	return zones.value.filter(
-		(zone) => zone?.name?.toLowerCase().includes(query) || zone?.status?.toLowerCase().includes(query)
+	if (!term.value) return zones.value
+	return zones.value.filter((zone) =>
+		[zone.name, zone.status, zone.plan?.name, zone.account?.name].some((field) =>
+			field?.toLowerCase().includes(term.value)
+		)
 	)
 })
 
-const addRecentZone = (entry) => {
-	const rest = recentZones.value.filter((z) => z.id !== entry.id)
-	recentZones.value = [entry, ...rest].slice(0, 6)
-	localStorage.setItem(STORAGE_KEYS.recentZones, JSON.stringify(recentZones.value))
+const openOnlyMatch = () => {
+	if (term.value && filteredZones.value.length === 1) navigateTo(recordsPath(filteredZones.value[0]))
 }
 
-onMounted(async () => {
-	apiKey.value = getApiKey()
-	if (!apiKey.value) return
+const zoneCount = (count) => `${count} ${count === 1 ? 'zone' : 'zones'}`
 
-	try {
-		const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.recentZones) || '[]')
-		recentZones.value = (Array.isArray(parsed) ? parsed : []).filter((z) => z && z.id && z.name)
-	} catch {
-		recentZones.value = []
-	}
+const countLabel = computed(() =>
+	term.value ? `${filteredZones.value.length} of ${zoneCount(zones.value.length)}` : zoneCount(zones.value.length)
+)
 
-	const capsPromise = (async () => {
-		try {
-			const { loadGlobal, missing } = useCapabilities()
-			const caps = await loadGlobal(apiKey.value)
-			capabilityMissing.value = missing(caps)
-		} catch {
-			capabilityMissing.value = []
+const emptyState = computed(() => {
+	if (term.value && zones.value.length) {
+		return {
+			icon: 'i-lucide-search-x',
+			title: `No zones match “${search.value.trim()}”`,
+			description: 'Search looks at the domain, status, plan and account.',
+			actions: [
+				{
+					label: 'Clear search',
+					icon: 'i-lucide-x',
+					color: 'neutral',
+					variant: 'outline',
+					onClick: clearSearch
+				}
+			]
 		}
-	})()
-
-	window.addEventListener('keydown', handleKeyDown)
-
-	const savedView = localStorage.getItem('zones-view-mode')
-	if (!route.query.view && (savedView === 'grid' || savedView === 'table')) viewMode.value = savedView
-
-	const cacheEntry = readZonesCache()
-	if (cacheEntry?.zones?.length) {
-		zones.value = cacheEntry.zones
-		loading.value = false
 	}
-
-	await Promise.all([capsPromise, getZones()])
-})
-
-onUnmounted(() => {
-	window.removeEventListener('keydown', handleKeyDown)
-})
-
-// Keyboard shortcut handler
-const handleKeyDown = (e) => {
-	if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
-		e.preventDefault()
-		document.getElementById('zone-search')?.focus()
-	}
-}
-
-const syncRouteQuery = useDebounceFn(() => {
-	const query = { ...route.query }
-	if (searchQuery.value.trim()) query.search = searchQuery.value.trim()
-	else delete query.search
-	if (viewMode.value === 'table') query.view = 'table'
-	else delete query.view
-	router.replace({ query })
-}, 200)
-
-watch(searchQuery, syncRouteQuery)
-
-watch(viewMode, (v) => {
-	localStorage.setItem('zones-view-mode', v)
-	syncRouteQuery()
-})
-
-const getZones = async ({ preferCache = true } = {}) => {
-	loading.value = true
-	loadError.value = ''
-	if (preferCache) {
-		const cacheEntry = readZonesCache()
-		if (cacheEntry?.zones?.length) {
-			zones.value = cacheEntry.zones
-			if (Date.now() - cacheEntry.fetchedAt < zonesCacheTtl) {
-				loading.value = false
-				return
+	return {
+		icon: 'i-lucide-globe',
+		title: 'This token can’t see any zones',
+		description: 'Give it Zone: Read access to the zones you manage, or add a site to your Cloudflare account.',
+		actions: [
+			{
+				label: 'Replace token',
+				icon: 'i-lucide-key-round',
+				color: 'neutral',
+				variant: 'outline',
+				to: '/login?replace=1'
+			},
+			{
+				label: 'Manage API tokens',
+				icon: 'i-lucide-external-link',
+				color: 'neutral',
+				variant: 'ghost',
+				to: API_TOKENS_URL,
+				target: '_blank'
 			}
-		}
+		]
 	}
-
-	try {
-		await refreshZones()
-		if (zonesError.value) throw zonesError.value
-		if (zonesData.value?.success === false) {
-			throw new Error(zonesData.value.errors?.[0]?.message || 'Cloudflare rejected the zones request')
-		}
-		zones.value = zonesData.value?.result || []
-		writeZonesCache(zones.value)
-	} catch (error) {
-		console.error('Error fetching zones:', error)
-		const message = error?.data?.statusMessage || error?.statusMessage || error?.message || 'Failed to fetch zones'
-		loadError.value = `${message}. Check the token permissions and try again.`
-		toast.add({
-			id: 'get-zones-error' + Date.now(),
-			title: 'Couldn’t Load Zones',
-			description: message,
-			icon: 'i-clarity-warning-solid',
-			duration: 3000,
-			color: 'error'
-		})
-	} finally {
-		loading.value = false
-	}
-}
-
-const prepareZone = (zone) => {
-	localStorage.setItem(STORAGE_KEYS.zoneId, zone.id)
-	localStorage.setItem(STORAGE_KEYS.zoneName, zone.name)
-	addRecentZone({ id: zone.id, name: zone.name })
-}
+})
 </script>

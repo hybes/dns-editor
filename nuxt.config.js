@@ -1,4 +1,9 @@
 export default defineNuxtConfig({
+	// Everything the app shows depends on a token held in the browser, so pages render
+	// client-side only. The Nitro server still serves the /api proxies.
+	ssr: false,
+	spaLoadingTemplate: 'spa-loading-template.html',
+
 	app: {
 		head: {
 			htmlAttrs: {
@@ -20,8 +25,7 @@ export default defineNuxtConfig({
 							}
 						]
 					: []
-		},
-		pageTransition: { name: 'fade', mode: 'out-in' }
+		}
 	},
 
 	modules: ['@nuxt/ui', '@nuxt/eslint'],
@@ -35,7 +39,7 @@ export default defineNuxtConfig({
 
 	icon: {
 		serverBundle: {
-			collections: ['clarity', 'heroicons', 'lucide']
+			collections: ['lucide']
 		}
 	},
 

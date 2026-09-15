@@ -1,168 +1,236 @@
 <template>
-	<main id="main-content" class="relative flex min-h-dvh items-center justify-center overflow-hidden px-4 py-10">
-		<Head>
-			<Title>Login</Title>
-		</Head>
-		<a class="skip-link" href="#login-form">Skip to sign in</a>
+	<div class="bg-default flex min-h-dvh flex-col">
+		<header class="flex items-center justify-between gap-4 px-4 py-3 sm:px-6">
+			<p class="text-highlighted flex items-center gap-2 font-semibold">
+				<img src="/favicon.svg" alt="" class="size-6" />
+				DNS Manager
+			</p>
+			<UColorModeButton />
+		</header>
 
-		<!-- ambient background -->
-		<div class="pointer-events-none absolute inset-0 -z-10">
-			<div
-				class="bg-primary/20 absolute top-[-12%] left-1/2 h-[460px] w-[760px] -translate-x-1/2 rounded-full blur-[130px]"
-			/>
-			<div
-				class="bg-primary/10 absolute right-[6%] bottom-[-15%] h-[320px] w-[440px] rounded-full blur-[130px]"
-			/>
-		</div>
-
-		<div class="absolute top-4 right-4">
-			<ClientOnly>
-				<UButton
-					:icon="isDark ? 'i-heroicons-sun-20-solid' : 'i-heroicons-moon-20-solid'"
-					color="neutral"
-					variant="ghost"
-					:aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-					@click="isDark = !isDark"
-				/>
-				<template #fallback>
-					<div class="h-8 w-8" />
-				</template>
-			</ClientOnly>
-		</div>
-
-		<div class="w-full max-w-md">
-			<div class="mb-8 flex flex-col items-center text-center">
-				<div
-					class="bg-primary/10 ring-primary/20 mb-4 flex h-14 w-14 items-center justify-center rounded-2xl ring-1"
-				>
-					<UIcon name="i-heroicons-cloud" class="text-primary h-7 w-7" />
-				</div>
-				<h1 class="text-highlighted text-2xl font-semibold tracking-tight">DNS Manager</h1>
-				<p class="text-muted mt-1.5 text-sm">A faster way to manage your Cloudflare DNS records</p>
-			</div>
-
-			<form
-				id="login-form"
-				class="border-default bg-default/80 rounded-2xl border p-6 shadow-xl backdrop-blur"
-				@submit.prevent="saveApiToken"
-			>
-				<label for="cf-api-key" class="text-highlighted mb-1.5 block text-sm font-medium">
-					Cloudflare API token
-				</label>
-				<UInput
-					id="cf-api-key"
-					v-model="apiToken"
-					:type="showToken ? 'text' : 'password'"
-					name="cloudflare-api-token"
-					autocomplete="off"
-					:spellcheck="false"
-					aria-describedby="cf-api-key-help"
-					size="lg"
-					icon="i-heroicons-key"
-					placeholder="Paste your API token…"
-					class="w-full"
-					:ui="{ trailing: 'pe-1' }"
-				>
-					<template #trailing>
-						<UButton
-							:icon="showToken ? 'i-heroicons-eye-slash-20-solid' : 'i-heroicons-eye-20-solid'"
-							color="neutral"
-							variant="ghost"
-							size="xs"
-							type="button"
-							:aria-label="showToken ? 'Hide token' : 'Show token'"
-							@click="showToken = !showToken"
-						/>
-					</template>
-				</UInput>
-				<p id="cf-api-key-help" class="text-muted mt-2 text-xs">
-					Stored only in this browser. Requests pass through this server to Cloudflare without persisting your
-					token.
+		<main class="flex flex-1 justify-center px-4 pt-6 pb-16 sm:items-center sm:pt-0">
+			<div class="w-full max-w-md">
+				<h1 class="text-highlighted text-2xl font-semibold text-pretty">
+					{{ replacing ? 'Replace your API token' : 'Sign in with a Cloudflare API token' }}
+				</h1>
+				<p v-if="replacing" class="text-muted mt-2 text-pretty">
+					The new token replaces the one saved in this browser once Cloudflare accepts it. Until then, the
+					saved token keeps working.
 				</p>
 
-				<UButton
-					color="primary"
-					size="lg"
-					block
-					type="submit"
-					class="mt-4"
-					trailing-icon="i-heroicons-arrow-right-20-solid"
-					:disabled="!apiToken.trim()"
-				>
-					Open DNS Manager
-				</UButton>
-
-				<div class="text-dimmed my-5 flex items-center gap-3 text-xs">
-					<span class="bg-default h-px flex-1" />
-					Don't have a token?
-					<span class="bg-default h-px flex-1" />
-				</div>
-
-				<div class="border-default bg-elevated/40 rounded-xl border p-4">
-					<p class="text-highlighted text-sm font-medium">Quick Setup</p>
-					<p class="text-muted mt-1 text-xs">
-						Create a custom token for all accounts &amp; zones, then grant:
-					</p>
-					<div class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
-						<div
-							v-for="perm in permissions"
-							:key="perm"
-							class="text-toned flex items-center gap-1.5 text-xs"
+				<form class="mt-6 flex flex-col gap-4" novalidate @submit.prevent="submit">
+					<UFormField label="Cloudflare API token" :error="fieldError" size="lg">
+						<UInput
+							ref="tokenInput"
+							v-model="token"
+							:type="showToken ? 'text' : 'password'"
+							name="cloudflare-api-token"
+							autocomplete="off"
+							autocapitalize="off"
+							:spellcheck="false"
+							autofocus
+							size="lg"
+							icon="i-lucide-key-round"
+							placeholder="Paste your token"
+							class="w-full"
+							:ui="{ trailing: 'pe-1' }"
 						>
-							<UIcon name="i-heroicons-check-circle-20-solid" class="text-primary h-4 w-4 shrink-0" />
-							{{ perm }}
-						</div>
-					</div>
-					<UButton
-						to="https://dash.cloudflare.com/profile/api-tokens"
-						external
-						target="_blank"
-						rel="noopener noreferrer"
-						variant="soft"
-						color="neutral"
-						block
-						class="mt-4"
-						icon="i-heroicons-key"
-						trailing-icon="i-heroicons-arrow-top-right-on-square-20-solid"
-					>
-						Open the Cloudflare token page
-					</UButton>
-				</div>
-			</form>
+							<template #trailing>
+								<UButton
+									:icon="showToken ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+									:aria-label="showToken ? 'Hide token' : 'Show token'"
+									color="neutral"
+									variant="link"
+									size="sm"
+									type="button"
+									@click="showToken = !showToken"
+								/>
+							</template>
+						</UInput>
+					</UFormField>
 
-			<p class="text-dimmed mt-6 text-center text-xs">
-				Some features depend on your Cloudflare plan, even with the right permissions.
-			</p>
-		</div>
-	</main>
+					<div class="flex flex-col gap-2 sm:flex-row">
+						<UButton
+							type="submit"
+							size="lg"
+							block
+							class="sm:flex-1"
+							:loading="verifying"
+							:label="submitLabel"
+						/>
+						<UButton
+							v-if="replacing"
+							to="/zones"
+							size="lg"
+							color="neutral"
+							variant="ghost"
+							label="Cancel"
+							class="justify-center"
+						/>
+					</div>
+					<p role="status" class="sr-only">{{ verifying ? 'Checking the token with Cloudflare' : '' }}</p>
+
+					<p class="text-muted text-sm text-pretty">
+						The token is saved only in this browser. Requests pass through this server to Cloudflare, and
+						the server doesn’t store the token.
+					</p>
+				</form>
+
+				<section aria-labelledby="token-setup-title" class="border-default mt-10 border-t pt-6">
+					<h2 id="token-setup-title" class="text-highlighted font-semibold">Don’t have a token?</h2>
+					<ol class="text-muted marker:text-dimmed mt-3 flex list-decimal flex-col gap-4 ps-5 text-sm">
+						<li class="text-pretty">
+							Open
+							<ULink
+								:to="API_TOKENS_URL"
+								target="_blank"
+								class="text-primary font-medium underline-offset-2 hover:underline"
+							>
+								API Tokens in Cloudflare<span class="sr-only"> (opens in a new tab)</span>
+								<UIcon name="i-lucide-external-link" class="inline size-3.5 align-[-2px]" />
+							</ULink>
+							and choose <strong class="text-default font-medium">Create Token</strong>, then
+							<strong class="text-default font-medium">Create Custom Token</strong>.
+						</li>
+						<li>
+							<p class="text-pretty">Add the permissions for the features you use:</p>
+							<table class="mt-2 w-full">
+								<caption class="sr-only">
+									Token permissions and the features that need them
+								</caption>
+								<thead>
+									<tr class="text-dimmed border-default border-b text-start">
+										<th scope="col" class="pe-3 pb-1.5 text-start font-medium">Permission</th>
+										<th scope="col" class="pe-3 pb-1.5 text-start font-medium">Access</th>
+										<th scope="col" class="pb-1.5 text-start font-medium">Used for</th>
+									</tr>
+								</thead>
+								<tbody v-for="group in PERMISSION_GROUPS" :key="group.scope">
+									<tr>
+										<th
+											scope="rowgroup"
+											colspan="3"
+											class="text-highlighted pt-3 pb-1 text-start font-medium"
+										>
+											{{ group.scope }}
+										</th>
+									</tr>
+									<tr v-for="item in group.items" :key="item.name">
+										<th scope="row" class="text-default py-1 pe-3 text-start font-normal">
+											{{ item.name }}
+										</th>
+										<td class="py-1 pe-3">{{ item.access }}</td>
+										<td class="py-1">{{ item.use }}</td>
+									</tr>
+								</tbody>
+							</table>
+						</li>
+						<li class="text-pretty">
+							Under <strong class="text-default font-medium">Account Resources</strong> and
+							<strong class="text-default font-medium">Zone Resources</strong>, include the accounts and
+							zones you manage. Create the token, then paste it above.
+						</li>
+					</ol>
+					<p class="text-muted mt-4 text-sm text-pretty">
+						Some features also depend on your Cloudflare plan, even with the right permissions.
+					</p>
+				</section>
+			</div>
+		</main>
+	</div>
 </template>
 
 <script setup>
-const apiToken = ref('')
-const showToken = ref(false)
-const router = useRouter()
-const isDark = useIsDark()
+import { API_TOKENS_URL } from '#shared/utils/cloudflare'
 
-const permissions = [
-	'Zone — Read, Edit',
-	'DNS — Read, Edit',
-	'Rulesets — Read, Edit',
-	'Bots — Read, Edit',
-	'Turnstile — Read, Edit',
-	'Analytics — Read'
+definePageMeta({ layout: false })
+
+// Names match Cloudflare's permission list when creating a custom token.
+const PERMISSION_GROUPS = [
+	{
+		scope: 'Zone',
+		items: [
+			{ name: 'Zone', access: 'Read', use: 'Listing zones' },
+			{ name: 'DNS', access: 'Edit', use: 'Records' },
+			{ name: 'Zone Settings', access: 'Edit', use: 'SSL mode' },
+			{ name: 'Zone WAF', access: 'Edit', use: 'Rules' },
+			{ name: 'Bot Management', access: 'Edit', use: 'Bot Fight Mode' }
+		]
+	},
+	{
+		scope: 'Account',
+		items: [
+			{ name: 'Turnstile', access: 'Edit', use: 'Turnstile' },
+			{ name: 'DNS Firewall', access: 'Edit', use: 'DNS Firewall' },
+			{ name: 'Account Analytics', access: 'Read', use: 'Analytics' }
+		]
+	}
 ]
 
-onMounted(() => {
-	apiToken.value = (localStorage.getItem(STORAGE_KEYS.apiKey) || '').trim()
-	if (apiToken.value) {
-		router.push('/')
-	}
+const route = useRoute()
+const { call } = useCfApi()
+const toast = useToast()
+
+const storedToken = readStorage(STORAGE_KEYS.apiKey).trim()
+const replacing = Boolean(storedToken && route.query.replace)
+
+useSeoMeta({ title: replacing ? 'Replace token' : 'Sign in' })
+
+const token = ref('')
+const showToken = ref(false)
+const verifying = ref(false)
+const fieldError = ref('')
+const tokenInput = useTemplateRef('tokenInput')
+
+const submitLabel = computed(() => {
+	if (verifying.value) return 'Checking with Cloudflare…'
+	return replacing ? 'Check and replace token' : 'Check token and continue'
 })
 
-const saveApiToken = () => {
-	const token = (apiToken.value || '').trim()
-	if (!token) return
-	localStorage.setItem(STORAGE_KEYS.apiKey, token)
-	router.push('/')
+watch(token, () => {
+	fieldError.value = ''
+})
+
+// Follow only an in-app path from the auth redirect; anything else goes to the zones list.
+const destination = computed(() => {
+	const target = route.query.redirect
+	if (typeof target !== 'string' || !target.startsWith('/') || /^\/[\\/]/.test(target)) return '/zones'
+	return target.startsWith('/login') ? '/zones' : target
+})
+
+// Focusing the field makes screen readers announce the error it now describes.
+const showFieldError = async (message) => {
+	fieldError.value = message
+	await nextTick()
+	tokenInput.value?.inputRef?.focus()
+}
+
+const submit = async () => {
+	if (verifying.value) return
+	const value = token.value.trim()
+	if (!value) return showFieldError('Paste your Cloudflare API token.')
+
+	verifying.value = true
+	try {
+		// auth:false sends this token instead of the saved one, and keeps a bad token here
+		// from raising the "saved token rejected" toast.
+		await call('verify_token', { apiKey: value }, { auth: false, fallback: 'Cloudflare didn’t accept this token.' })
+	} catch (error) {
+		verifying.value = false
+		return showFieldError(describeError(error, 'Couldn’t check the token. Try again.'))
+	}
+
+	// Zone details and feature checks cached for a different token must not carry over.
+	// Resetting rather than deleting keeps any still-mounted reader from seeing undefined.
+	if (value !== storedToken) clearNuxtState((key) => key.startsWith('cf-'), { reset: true })
+	localStorage.setItem(STORAGE_KEYS.apiKey, value)
+	// The new token is accepted, so a "saved token rejected" warning no longer applies.
+	toast.remove('cf-token-rejected')
+
+	try {
+		await navigateTo(destination.value, { replace: true })
+	} finally {
+		verifying.value = false
+	}
 }
 </script>

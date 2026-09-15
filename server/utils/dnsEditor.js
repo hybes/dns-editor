@@ -2,6 +2,8 @@ import { cfFetch } from './cfFetch'
 
 const SUPPORTED_STANDARD_RECORD_TYPES = new Set(['A', 'AAAA', 'CNAME', 'MX', 'TXT'])
 const MULTI_VALUE_RECORD_TYPES = new Set(['A', 'AAAA', 'MX', 'TXT'])
+const RECORDS_PER_PAGE = 500
+const PAGE_CONCURRENCY = 4
 
 const normalizeWhitespace = (value) =>
 	typeof value === 'string'
@@ -205,37 +207,88 @@ export function buildDnsPlan({ proposedRecords = [], existingRecords = [], zoneN
 	}
 }
 
-export async function fetchAllDnsRecords({ apiKey, zoneId, cacheTtl = 15000 }) {
-	let data = await cfFetch({
-		apiKey,
-		method: 'GET',
-		path: `/zones/${zoneId}/dns_records?per_page=100`,
-		cacheTtl
+// Runs `task` for each item with at most `limit` in flight, keeping results in input order.
+const mapWithConcurrency = async (items, limit, task) => {
+	const results = new Array(items.length)
+	let next = 0
+	const worker = async () => {
+		while (next < items.length) {
+			const index = next++
+			results[index] = await task(items[index])
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+	return results
+}
+
+const failureEnvelope = (error) => ({
+	success: false,
+	errors: [{ message: error?.message || 'Cloudflare didn’t respond' }]
+})
+
+// Loads every page of a zone's records. If page 1 fails, the whole request fails with
+// Cloudflare's error. A later page that still fails after one retry, or a total that doesn't
+// add up, returns what did load flagged partial:true with a message, so an incomplete list
+// never passes for a complete one. Pages load a few at a time to stay clear of rate limits.
+export async function fetchAllDnsRecords({ apiKey, zoneId, cacheTtl = 15000, fresh = false }) {
+	const getPage = (page) =>
+		cfFetch({
+			apiKey,
+			method: 'GET',
+			path: `/zones/${zoneId}/dns_records?per_page=${RECORDS_PER_PAGE}&page=${page}`,
+			cacheTtl,
+			fresh
+		}).catch(failureEnvelope)
+
+	const first = await getPage(1)
+	if (!first?.success) {
+		return { ...first, success: false, result: [] }
+	}
+
+	const totalPages = Number(first.result_info?.total_pages) || 1
+	const totalCount = Number(first.result_info?.total_count) || 0
+	const laterPages = Array.from({ length: Math.max(0, totalPages - 1) }, (_, index) => index + 2)
+
+	const pages = await mapWithConcurrency(laterPages, PAGE_CONCURRENCY, async (page) => {
+		const data = await getPage(page)
+		return data?.success ? data : getPage(page)
 	})
 
-	if (!data.result) data.result = []
-	if (!data.success) return data
-
-	const totalPages = data?.result_info?.total_pages || 1
-	if (totalPages > 1) {
-		const pages = Array.from({ length: totalPages - 1 }, (_, index) => index + 2)
-		const results = await Promise.all(
-			pages.map((page) =>
-				cfFetch({
-					apiKey,
-					method: 'GET',
-					path: `/zones/${zoneId}/dns_records?per_page=100&page=${page}`,
-					cacheTtl
-				})
-			)
-		)
-
-		for (const pageData of results) {
-			if (pageData.success && pageData.result) data.result = data.result.concat(pageData.result)
+	// Keyed by ID so a record that moved between pages while loading isn't listed twice.
+	const byId = new Map()
+	for (const record of first.result || []) byId.set(record.id, record)
+	const failures = []
+	for (const data of pages) {
+		if (data?.success) {
+			for (const record of data.result || []) byId.set(record.id, record)
+		} else {
+			failures.push(data?.errors?.[0]?.message || '')
 		}
 	}
 
-	return data
+	const result = [...byId.values()]
+	const expected = Math.max(totalCount, result.length)
+	const resultInfo = { count: result.length, total_count: expected }
+
+	if (!failures.length && result.length >= totalCount) {
+		return { success: true, errors: [], messages: first.messages || [], result, result_info: resultInfo }
+	}
+
+	const pagesLabel = failures.length === 1 ? 'one page' : `${failures.length} pages`
+	const detail = failures[0] ? `: ${failures[0].replace(/\.$/, '')}` : ''
+	const reason = failures.length
+		? `Cloudflare didn’t return ${pagesLabel}${detail}.`
+		: 'Records changed while the list was loading.'
+
+	return {
+		success: true,
+		partial: true,
+		message: `Only ${result.length} of ${expected} records loaded. ${reason}`,
+		errors: [],
+		messages: first.messages || [],
+		result,
+		result_info: resultInfo
+	}
 }
 
 export function buildCloudflareDnsPayload(change) {

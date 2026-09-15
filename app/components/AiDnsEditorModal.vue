@@ -1,124 +1,148 @@
 <template>
-	<UButton variant="outline" color="primary" icon="i-heroicons-sparkles" @click="open = true">
-		AI DNS Editor
-	</UButton>
-
-	<UModal v-model:open="open">
-		<template #title>
-			<div class="flex items-center gap-2">
-				<UIcon name="i-heroicons-sparkles" class="text-primary h-5 w-5" />
-				<span>AI DNS Editor</span>
-			</div>
-		</template>
-
-		<template #description>
-			Paste raw DNS instructions for <span class="font-semibold">{{ zoneName || 'this zone' }}</span> and review
-			the extracted records before anything is added.
-		</template>
-
+	<UModal
+		v-model:open="open"
+		title="AI editor"
+		:description="`Paste DNS setup instructions for ${zoneName || 'this zone'}. Nothing changes until you review the plan and apply it.`"
+		:dismissible="!applying"
+		:close="!applying"
+		:ui="{ content: 'sm:max-w-2xl' }"
+	>
 		<template #body>
-			<div class="space-y-4">
-				<div
-					class="border-comet-200 bg-comet-50 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border p-4 text-sm"
+			<div class="flex flex-col gap-4">
+				<UFormField
+					label="Instructions"
+					name="ai-instructions"
+					description="Setup text from a provider’s help page or email. A, AAAA, CNAME, MX and TXT records are picked up."
 				>
-					<p class="font-medium">What works well here</p>
-					<p class="text-comet-600 dark:text-comet-300 mt-1">
-						Paste provider setup text, screenshots copied as text, or email snippets. The AI will extract
-						standard DNS records and flag conflicts before you confirm.
-					</p>
-				</div>
+					<UTextarea
+						v-model="input"
+						:rows="6"
+						autoresize
+						:maxrows="14"
+						placeholder="Add a CNAME record for www that points to shops.example-host.net…"
+						:disabled="analysing || applying"
+						class="w-full"
+					/>
+				</UFormField>
 
-				<UTextarea
-					v-model="input"
-					:rows="12"
-					placeholder="Paste DNS instructions here…"
-					aria-label="DNS instructions to parse"
-					class="w-full"
+				<UAlert
+					v-if="notice"
+					role="alert"
+					:color="notice.color"
+					variant="subtle"
+					:icon="notice.icon"
+					:title="notice.title"
+					:description="notice.description"
 				/>
 
-				<div
-					v-if="errorMessage"
-					class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
-				>
-					{{ errorMessage }}
-				</div>
-
-				<div v-if="plan" class="space-y-4">
-					<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-						<div
-							v-for="stat in stats"
-							:key="stat.label"
-							class="border-comet-200 dark:border-comet-700 dark:bg-comet-900/40 rounded-lg border bg-white/70 p-3"
-						>
-							<div class="text-comet-500 text-xs">{{ stat.label }}</div>
-							<div class="text-comet-900 dark:text-comet-100 text-lg font-semibold">{{ stat.value }}</div>
-						</div>
+				<section v-if="plan" aria-labelledby="ai-plan-heading" class="flex flex-col gap-3">
+					<div>
+						<h3 id="ai-plan-heading" class="text-highlighted text-sm font-semibold">Proposed changes</h3>
+						<p v-if="plan.summary" class="text-default mt-1 text-sm">{{ plan.summary }}</p>
+						<p class="text-muted mt-1 text-sm">{{ countsLabel }}</p>
 					</div>
 
-					<div class="border-comet-200 dark:border-comet-700 rounded-lg border p-4">
-						<p class="text-sm font-medium">{{ plan.summary }}</p>
-						<div v-if="plan.warnings?.length" class="mt-3 space-y-2">
-							<p class="text-xs font-semibold tracking-wide text-amber-600 uppercase">Warnings</p>
-							<div
-								v-for="warning in plan.warnings"
-								:key="warning"
-								class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-							>
-								{{ warning }}
-							</div>
-						</div>
-					</div>
+					<UAlert
+						v-if="plan.warnings.length"
+						color="warning"
+						variant="subtle"
+						icon="i-lucide-triangle-alert"
+						title="Check these before applying"
+					>
+						<template #description>
+							<ul class="list-disc space-y-1 ps-4">
+								<li v-for="warning in plan.warnings" :key="warning">{{ warning }}</li>
+							</ul>
+						</template>
+					</UAlert>
 
-					<div class="max-h-[24rem] space-y-3 overflow-y-auto pr-1">
-						<div
-							v-for="record in plan.records"
-							:key="`${record.action}:${record.type}:${record.name}:${record.content}:${record.priority ?? ''}`"
-							class="border-comet-200 dark:border-comet-700 rounded-lg border p-4"
-						>
-							<div class="flex flex-wrap items-center gap-2">
-								<UBadge :color="getActionColor(record.action)" variant="subtle" class="uppercase">
-									{{ record.action }}
+					<ul v-if="plan.records.length" class="divide-default border-default divide-y border-y">
+						<li v-for="item in plan.records" :key="item.key" class="flex min-w-0 flex-col gap-1 py-3">
+							<div class="flex min-w-0 flex-wrap items-center gap-2">
+								<UBadge :color="ACTIONS[item.action]?.color || 'neutral'" variant="subtle" size="sm">
+									{{ ACTIONS[item.action]?.label || item.action }}
 								</UBadge>
-								<UBadge color="neutral" variant="outline" class="uppercase">
-									{{ record.type }}
+								<UBadge
+									:color="getRecordTypeColor(item.type)"
+									variant="outline"
+									size="sm"
+									class="font-mono"
+								>
+									{{ item.type }}
 								</UBadge>
-								<UBadge v-if="record.priority !== null" color="info" variant="outline">
-									Priority {{ record.priority }}
-								</UBadge>
+								<span class="text-highlighted min-w-0 text-sm font-medium break-all">
+									{{ item.displayName }}
+								</span>
 							</div>
+							<p class="text-default font-mono text-xs break-all">
+								<span v-if="item.priority !== null" class="text-muted">{{ item.priority }}&nbsp;</span
+								>{{ item.content }}
+							</p>
+							<p v-if="item.action === 'update' && item.existingContent" class="text-muted text-xs">
+								Replaces <span class="font-mono break-all">{{ item.existingContent }}</span>
+							</p>
+							<p class="text-muted text-xs">{{ item.reason }}</p>
+							<p v-if="failures[item.key]" class="text-error flex items-start gap-1.5 text-xs">
+								<UIcon name="i-lucide-circle-x" class="mt-px size-3.5 shrink-0" aria-hidden="true" />
+								<span>Not applied: {{ failures[item.key] }}</span>
+							</p>
+						</li>
+					</ul>
+				</section>
 
-							<div class="mt-3 space-y-2 text-sm">
-								<div>
-									<p class="text-comet-500 text-xs tracking-wide uppercase">Name</p>
-									<p class="font-medium">{{ record.displayName }}</p>
-								</div>
-								<div>
-									<p class="text-comet-500 text-xs tracking-wide uppercase">Value</p>
-									<p class="font-mono text-xs break-words">{{ record.content }}</p>
-								</div>
-								<div v-if="record.action === 'update' && record.existingContent">
-									<p class="text-comet-500 text-xs tracking-wide uppercase">Current value</p>
-									<p class="font-mono text-xs break-words">{{ record.existingContent }}</p>
-								</div>
-								<p class="text-comet-500 text-xs">{{ record.reason }}</p>
-							</div>
-						</div>
-					</div>
-				</div>
+				<section v-if="applied.length" aria-labelledby="ai-applied-heading" class="flex flex-col gap-2">
+					<h3 id="ai-applied-heading" class="text-highlighted text-sm font-semibold">Applied</h3>
+					<ul class="flex flex-col gap-1">
+						<li v-for="item in applied" :key="item.key" class="flex min-w-0 items-center gap-2 text-sm">
+							<UIcon
+								name="i-lucide-circle-check"
+								class="text-success size-4 shrink-0"
+								aria-hidden="true"
+							/>
+							<span class="text-muted">{{ ACTIONS[item.action]?.done }}</span>
+							<span class="text-default font-mono text-xs">{{ item.type }}</span>
+							<span class="text-default min-w-0 truncate">{{ item.displayName }}</span>
+						</li>
+					</ul>
+				</section>
 			</div>
 		</template>
 
 		<template #footer>
-			<div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<UButton color="neutral" variant="ghost" @click="resetState">Clear</UButton>
-				<div class="flex flex-col gap-3 sm:flex-row sm:justify-end">
-					<UButton color="neutral" variant="ghost" @click="open = false">Cancel</UButton>
-					<UButton :loading="analysisLoading" :disabled="!canAnalyze" variant="outline" @click="analyze">
-						Analyze
-					</UButton>
-					<UButton :loading="applyLoading" :disabled="!canApply" color="success" @click="applyPlan">
-						Apply {{ applyableCount }} change{{ applyableCount === 1 ? '' : 's' }}
-					</UButton>
+			<div class="flex w-full flex-wrap items-center justify-between gap-2">
+				<UButton
+					v-if="input || plan"
+					color="neutral"
+					variant="ghost"
+					label="Clear"
+					:disabled="analysing || applying"
+					@click="reset"
+				/>
+				<span v-else />
+				<div class="flex flex-wrap justify-end gap-2">
+					<UButton
+						color="neutral"
+						variant="ghost"
+						:label="applied.length ? 'Close' : 'Cancel'"
+						:disabled="applying"
+						@click="open = false"
+					/>
+					<UButton
+						:color="plan ? 'neutral' : 'primary'"
+						:variant="plan ? 'outline' : 'solid'"
+						:label="plan ? 'Analyse again' : 'Analyse'"
+						:loading="analysing"
+						:disabled="!canAnalyse"
+						@click="analyse"
+					/>
+					<UButton
+						v-if="plan"
+						color="primary"
+						:label="applyLabel"
+						:loading="applying"
+						:disabled="!canApply"
+						@click="applyPlan"
+					/>
 				</div>
 			</div>
 		</template>
@@ -127,12 +151,8 @@
 
 <script setup>
 const props = defineProps({
-	apiKey: {
-		type: String,
-		required: true
-	},
 	zoneId: {
-		type: [String, Number],
+		type: String,
 		required: true
 	},
 	zoneName: {
@@ -141,120 +161,187 @@ const props = defineProps({
 	}
 })
 
-const emit = defineEmits(['applied'])
+const open = defineModel('open', { type: Boolean, default: false })
 
-const toast = useToast()
-const open = ref(false)
+// Only create and update can be applied; the other actions are shown so nothing in the
+// paste silently disappears.
+const ACTIONS = {
+	create: { label: 'Create', color: 'success', done: 'Created' },
+	update: { label: 'Update', color: 'warning', done: 'Updated' },
+	exists: { label: 'Already exists', color: 'neutral' },
+	conflict: { label: 'Conflict', color: 'error' }
+}
+
+const { call } = useCfApi()
+const notify = useNotify()
+const { getRecordTypeColor } = useRecordTypes()
+const zoneRecords = useZoneRecords(() => props.zoneId)
+
 const input = ref('')
 const plan = ref(null)
-const errorMessage = ref('')
-const analysisLoading = ref(false)
-const applyLoading = ref(false)
+const failures = ref({})
+const applied = ref([])
+const notice = ref(null)
+const analysing = ref(false)
+const applying = ref(false)
 
-const canAnalyze = computed(
-	() => Boolean(props.apiKey && props.zoneId && props.zoneName && input.value.trim()) && !analysisLoading.value
+const applyable = computed(() =>
+	(plan.value?.records || []).filter((item) => item.action === 'create' || item.action === 'update')
 )
-const applyableRecords = computed(() =>
-	(plan.value?.records || []).filter((record) => record.action === 'create' || record.action === 'update')
-)
-const applyableCount = computed(() => applyableRecords.value.length)
-const canApply = computed(() => applyableCount.value > 0 && !applyLoading.value)
-const stats = computed(() => {
-	const counts = plan.value?.counts || { create: 0, update: 0, exists: 0, conflict: 0 }
-	return [
-		{ label: 'Create', value: counts.create || 0 },
-		{ label: 'Update', value: counts.update || 0 },
-		{ label: 'Already there', value: counts.exists || 0 },
-		{ label: 'Conflicts', value: counts.conflict || 0 }
+const canAnalyse = computed(() => Boolean(props.zoneId && input.value.trim()) && !analysing.value && !applying.value)
+const canApply = computed(() => applyable.value.length > 0 && !analysing.value && !applying.value)
+const applyLabel = computed(() => `Apply ${plural(applyable.value.length, 'change')}`)
+
+const countsLabel = computed(() => {
+	const records = plan.value?.records || []
+	const count = (action) => records.filter((item) => item.action === action).length
+	const conflicts = count('conflict')
+	const parts = [
+		[count('create'), 'to create'],
+		[count('update'), 'to update'],
+		[count('exists'), 'already in the zone'],
+		[conflicts, conflicts === 1 ? 'conflict' : 'conflicts']
 	]
+		.filter(([total]) => total > 0)
+		.map(([total, label]) => `${formatNumber(total)} ${label}`)
+	return parts.length ? parts.join(', ') : 'Nothing left to apply.'
 })
 
-const getActionColor = (action) => {
-	if (action === 'create') return 'success'
-	if (action === 'update') return 'warning'
-	if (action === 'exists') return 'neutral'
-	if (action === 'conflict') return 'error'
-	return 'neutral'
-}
-
-const resetState = () => {
-	input.value = ''
+const clearPlan = () => {
 	plan.value = null
-	errorMessage.value = ''
+	failures.value = {}
+	applied.value = []
+	notice.value = null
 }
 
-const analyze = async () => {
-	errorMessage.value = ''
-	analysisLoading.value = true
+const reset = () => {
+	input.value = ''
+	clearPlan()
+}
+
+// A plan belongs to the text it came from, so editing the text discards it.
+watch(input, () => {
+	if (plan.value || notice.value || applied.value.length) clearPlan()
+})
+
+// The zone can change while the modal is closed, so reopening starts from a fresh analysis.
+watch(open, (isOpen) => {
+	if (!isOpen && !applying.value) clearPlan()
+})
+
+const analyse = async () => {
+	if (!canAnalyse.value) return
+	const submitted = input.value
+	analysing.value = true
+	clearPlan()
 
 	try {
-		const response = await $fetch('/api/ai_dns_editor/plan', {
-			method: 'POST',
-			body: {
-				apiKey: props.apiKey,
-				currZone: props.zoneId,
-				zoneName: props.zoneName,
-				input: input.value
-			}
-		})
+		const response = await call(
+			'ai_dns_editor/plan',
+			{ currZone: props.zoneId, input: submitted },
+			{ fallback: 'Couldn’t analyse the instructions' }
+		)
+		if (input.value !== submitted) return
 
-		plan.value = response?.result || null
-		if (!plan.value?.records?.length) {
-			errorMessage.value = 'No standard DNS records were found in that paste.'
+		const result = response?.result || {}
+		const records = (result.records || []).map((item, index) => ({
+			...item,
+			key: `${index}:${item.type}:${item.name}`
+		}))
+
+		if (!records.length) {
+			notice.value = {
+				color: 'warning',
+				icon: 'i-lucide-search-x',
+				title: 'No records found',
+				description: result.warnings?.length
+					? result.warnings.join(' ')
+					: 'No A, AAAA, CNAME, MX or TXT records were found. Check the text includes record names and values.'
+			}
+			return
 		}
+
+		plan.value = { summary: result.summary || '', warnings: result.warnings || [], records }
 	} catch (error) {
-		plan.value = null
-		errorMessage.value = error?.data?.statusMessage || error?.message || 'Failed to analyze DNS instructions'
+		if (input.value !== submitted) return
+		notice.value = {
+			color: 'error',
+			icon: 'i-lucide-circle-alert',
+			title: 'Couldn’t analyse the instructions',
+			description: describeError(error, 'Try again in a moment.')
+		}
+	} finally {
+		analysing.value = false
 	}
-	analysisLoading.value = false
 }
 
 const applyPlan = async () => {
-	if (!applyableRecords.value.length) return
+	if (!canApply.value) return
+	const changes = applyable.value
+	applying.value = true
+	notice.value = null
 
-	applyLoading.value = true
-	errorMessage.value = ''
-
+	let outcome = null
 	try {
-		const response = await $fetch('/api/ai_dns_editor/apply', {
-			method: 'POST',
-			body: {
-				apiKey: props.apiKey,
-				currZone: props.zoneId,
-				changes: applyableRecords.value
-			}
-		})
-
-		const result = response?.result || { created: 0, updated: 0, failed: 0 }
-		if (result.failed > 0) {
-			errorMessage.value = `${result.failed} change${result.failed === 1 ? '' : 's'} failed while applying.`
-		}
-
-		toast.add({
-			id: `ai-dns-editor-${Date.now()}`,
-			title: 'AI DNS changes applied',
-			description: `${result.created} created, ${result.updated} updated${
-				result.failed ? `, ${result.failed} failed` : ''
-			}`,
-			icon: 'i-clarity-check-circle-solid',
-			duration: 3500,
-			color: result.failed ? 'warning' : 'success'
-		})
-
-		emit('applied', result)
-		if (!result.failed) {
-			open.value = false
-			resetState()
-		}
+		const response = await call(
+			'ai_dns_editor/apply',
+			{ currZone: props.zoneId, changes },
+			{ fallback: 'Couldn’t apply the changes' }
+		)
+		outcome = response?.result
 	} catch (error) {
-		errorMessage.value = error?.data?.statusMessage || error?.message || 'Failed to apply DNS changes'
+		// When some changes fail the route still reports every change's result.
+		outcome = error?.response?.result || null
+		if (!outcome?.results) {
+			notice.value = {
+				color: 'error',
+				icon: 'i-lucide-circle-alert',
+				title: 'No changes were applied',
+				description: describeError(error, 'Try again in a moment.')
+			}
+			// The notice sits above the plan, which may be scrolled out of view.
+			notify.error('No changes were applied', error, 'Try again in a moment.')
+			applying.value = false
+			return
+		}
 	}
 
-	applyLoading.value = false
-}
+	const resultsByKey = new Map((outcome?.results || []).map((item) => [item.key, item]))
+	const succeeded = changes.filter((item) => resultsByKey.get(item.key)?.success)
+	const failed = changes.filter((item) => !resultsByKey.get(item.key)?.success)
+	const appliedKeys = new Set(succeeded.map((item) => item.key))
 
-watch(open, (value) => {
-	if (value) return
-	errorMessage.value = ''
-})
+	// Applied changes leave the plan, so pressing Apply again only retries what failed.
+	failures.value = Object.fromEntries(
+		failed.map((item) => [
+			item.key,
+			resultsByKey.get(item.key)?.message || 'Cloudflare didn’t report a result for this change'
+		])
+	)
+	applied.value = [...applied.value, ...succeeded]
+	plan.value = { ...plan.value, records: plan.value.records.filter((item) => !appliedKeys.has(item.key)) }
+	applying.value = false
+
+	if (succeeded.length) zoneRecords.refresh()
+
+	if (!failed.length) {
+		notify.success(`Applied ${plural(succeeded.length, 'change')} to ${props.zoneName || 'this zone'}`)
+		open.value = false
+		reset()
+		return
+	}
+
+	if (succeeded.length) {
+		notify.warning(
+			`Applied ${formatNumber(succeeded.length)} of ${formatNumber(changes.length)} changes`,
+			`${plural(failed.length, 'change')} failed. The reasons are listed in the AI editor.`
+		)
+		return
+	}
+
+	notify.error(
+		'No changes were applied',
+		`Cloudflare rejected ${failed.length === 1 ? 'the change' : `all ${formatNumber(failed.length)} changes`}. The reasons are listed under each one.`
+	)
+}
 </script>

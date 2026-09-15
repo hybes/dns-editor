@@ -1,6 +1,8 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { fetchAllDnsRecords } from '../utils/dnsEditor'
+import { readId } from '../utils/ids'
+
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
@@ -9,16 +11,20 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
 		}
 
-		if (!body.currZone) {
-			throw createError({ statusCode: 400, statusMessage: 'Zone ID is required' })
-		}
+		const zoneId = readId(body.currZone, 'Zone ID')
 
-		return await fetchAllDnsRecords({ apiKey: body.apiKey, zoneId: body.currZone, cacheTtl: 15000 })
+		// An explicit refresh or retry sends fresh:true so it really goes back to Cloudflare.
+		return await fetchAllDnsRecords({
+			apiKey: body.apiKey,
+			zoneId,
+			cacheTtl: 15000,
+			fresh: body.fresh === true
+		})
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Error fetching DNS records: ${error?.message || 'Unknown error'}`
+			statusMessage: `Couldn’t load DNS records: ${error?.message || 'unknown error'}`
 		})
 	}
 })

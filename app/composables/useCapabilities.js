@@ -1,54 +1,41 @@
+const pending = new Map()
+
+// Which Cloudflare features the token can use in a zone, probed once per token and zone
+// and shared across pages. Concurrent callers share one in-flight request.
 export function useCapabilities() {
-	const state = useState('cf-capabilities', () => ({
-		apiKey: null,
-		global: null,
-		zones: {},
-		loading: false
-	}))
+	const state = useState('cf-capabilities', () => ({ apiKey: null, zones: {} }))
 
 	const ensureKey = (apiKey) => {
-		if (!apiKey) return
 		if (state.value.apiKey === apiKey) return
-		state.value.apiKey = apiKey
-		state.value.global = null
-		state.value.zones = {}
+		state.value = { apiKey, zones: {} }
+		pending.clear()
 	}
 
-	const loadGlobal = async (apiKey) => {
-		if (!apiKey) return null
-		ensureKey(apiKey)
-		if (state.value.global) return state.value.global
-		state.value.loading = true
-		try {
-			const data = await $fetch('/api/capabilities', {
-				method: 'POST',
-				body: { apiKey }
+	// A request that fails outright is stored like a failed probe, so pages waiting on the
+	// check stop showing a skeleton and can offer to check again.
+	const request = (cacheKey, body, store) => {
+		if (pending.has(cacheKey)) return pending.get(cacheKey)
+		const promise = $fetch('/api/capabilities', { method: 'POST', body })
+			.catch(() => null)
+			.then((data) => {
+				if (state.value?.apiKey !== body.apiKey) return null
+				return store(data)
 			})
-			state.value.global =
-				data && data.success
-					? data.result
-					: { zones: { available: false, reason: data?.errors?.[0]?.message || 'Unavailable' } }
-			return state.value.global
-		} finally {
-			state.value.loading = false
-		}
+			.finally(() => pending.delete(cacheKey))
+		pending.set(cacheKey, promise)
+		return promise
 	}
 
-	const loadZone = async (apiKey, zoneId) => {
+	// A failed probe is stored as null so the zone counts as checked (nothing available)
+	// while the next load() retries it.
+	const loadZone = async (apiKey, zoneId, { force = false } = {}) => {
 		if (!apiKey || !zoneId) return null
 		ensureKey(apiKey)
-		if (state.value.zones[zoneId]) return state.value.zones[zoneId]
-		state.value.loading = true
-		try {
-			const data = await $fetch('/api/capabilities', {
-				method: 'POST',
-				body: { apiKey, currZone: zoneId }
-			})
-			state.value.zones[zoneId] = data && data.success ? data.result : null
+		if (!force && state.value.zones[zoneId]) return state.value.zones[zoneId]
+		return request(`zone:${zoneId}`, { apiKey, currZone: zoneId }, (data) => {
+			state.value.zones[zoneId] = data?.success ? data.result : null
 			return state.value.zones[zoneId]
-		} finally {
-			state.value.loading = false
-		}
+		})
 	}
 
 	const missing = (caps) => {
@@ -58,13 +45,10 @@ export function useCapabilities() {
 			.map(([k, v]) => ({ key: k, reason: v.reason || 'Unavailable' }))
 	}
 
-	const can = (caps, key) => {
-		return Boolean(caps && caps[key] && caps[key].available)
-	}
+	const can = (caps, key) => Boolean(caps && caps[key] && caps[key].available)
 
 	return {
 		state,
-		loadGlobal,
 		loadZone,
 		missing,
 		can

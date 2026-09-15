@@ -1,7 +1,10 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { cfFetch } from '../utils/cfFetch'
+import { readId } from '../utils/ids'
 
+// Passes Cloudflare's envelope through unchanged. fight_mode only exists on the free
+// plan's configuration, so the page decides what a missing value means.
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
@@ -10,15 +13,14 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
 		}
 
-		if (!body.currZone) {
-			throw createError({ statusCode: 400, statusMessage: 'Zone ID is required' })
-		}
+		const zoneId = readId(body.currZone, 'Zone ID')
 
 		return await cfFetch({
 			apiKey: body.apiKey,
 			method: 'GET',
-			path: `/zones/${body.currZone}/bot_management`,
-			cacheTtl: 15000
+			path: `/zones/${zoneId}/bot_management`,
+			cacheTtl: 15000,
+			fresh: body.fresh === true
 		})
 	} catch (error) {
 		if (error?.statusCode) throw error

@@ -1,6 +1,10 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { cfFetch } from '../utils/cfFetch'
+import { readId } from '../utils/ids'
+
+const CACHE_TTL = 15000
+
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
@@ -9,21 +13,19 @@ export default defineEventHandler(async (event) => {
 			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
 		}
 
-		if (!body.currZone) {
-			throw createError({ statusCode: 400, statusMessage: 'Zone ID is required' })
-		}
+		const zoneId = readId(body.currZone, 'Zone ID')
 
-		const [data, sslData] = await Promise.all([
-			cfFetch({ apiKey: body.apiKey, method: 'GET', path: `/zones/${body.currZone}`, cacheTtl: 15000 }),
-			cfFetch({
-				apiKey: body.apiKey,
-				method: 'GET',
-				path: `/zones/${body.currZone}/settings/ssl`,
-				cacheTtl: 15000
-			})
-		])
-		if (!data.success) return data
-		data.result.ssl = sslData && sslData.success ? sslData.result : { value: 'unknown' }
+		// fresh:true skips the stored answer, so an explicit refresh shows changes made elsewhere.
+		const fresh = body.fresh === true
+		const get = (path) => cfFetch({ apiKey: body.apiKey, method: 'GET', path, cacheTtl: CACHE_TTL, fresh })
+
+		const [data, sslData] = await Promise.all([get(`/zones/${zoneId}`), get(`/zones/${zoneId}/settings/ssl`)])
+		if (!data?.success) return data
+
+		// The zone still loads when its SSL setting can't be read; the error says why.
+		data.result.ssl = sslData?.success
+			? sslData.result
+			: { value: 'unknown', error: sslData?.errors?.[0]?.message || 'Cloudflare didn’t return the SSL setting' }
 
 		return data
 	} catch (error) {

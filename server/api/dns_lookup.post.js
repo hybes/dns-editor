@@ -1,7 +1,8 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { normaliseLookupName } from '../utils/domainNames'
-import { dohQuery, RECORD_TYPES, COMMON_RECORD_TYPES, RESOLVERS, RESOLVER_IDS } from '../utils/doh'
+import { LOOKUP_RECORD_TYPES } from '#shared/utils/dnsTypes'
+import { dohQuery, COMMON_RECORD_TYPES, RESOLVERS, RESOLVER_IDS } from '../utils/doh'
 
 // Public-resolver lookup. Deliberately independent of the Cloudflare token so it can
 // show what the rest of the internet currently sees for a name.
@@ -59,7 +60,7 @@ export default defineEventHandler(async (event) => {
 
 		let type = typeof body.type === 'string' ? body.type.trim().toUpperCase() : 'A'
 		if (parsed.reverse && type !== 'PTR') type = 'PTR'
-		if (type !== 'ALL' && !RECORD_TYPES.includes(type)) {
+		if (type !== 'ALL' && !LOOKUP_RECORD_TYPES.includes(type)) {
 			throw createError({ statusCode: 400, statusMessage: `Unsupported record type: ${type}` })
 		}
 

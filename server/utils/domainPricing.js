@@ -4,8 +4,14 @@
 
 const PRICING_URL = 'https://api.porkbun.com/api/json/v3/pricing/get'
 const PRICING_TTL = 6 * 60 * 60 * 1000
+// Porkbun's full price list can take around ten seconds. Searches stop waiting after a short
+// grace period (domain_search.post.js), so a slow fetch finishes in the background instead.
+const REQUEST_TIMEOUT_MS = 20000
+// Self-hosted servers with restricted egress often can't reach Porkbun at all. Remembering
+// the failure means that costs one timeout every few minutes instead of one per search.
+const FAILURE_TTL = 10 * 60 * 1000
 
-const state = globalThis.__domainPricingState || { data: null, promise: null }
+const state = globalThis.__domainPricingState || { data: null, promise: null, failedUntil: 0 }
 if (!globalThis.__domainPricingState) globalThis.__domainPricingState = state
 
 const toAmount = (value) => {
@@ -13,14 +19,16 @@ const toAmount = (value) => {
 	return Number.isFinite(number) ? number : null
 }
 
+// Never rejects: resolves to the price list, a stale copy of it, or null.
 export async function getTldPricing() {
 	const now = Date.now()
 	if (state.data && state.data.expiresAt > now) return state.data.value
+	if ((state.failedUntil || 0) > now) return state.data?.value || null
 	if (state.promise) return state.promise
 
 	state.promise = (async () => {
 		const controller = new AbortController()
-		const timer = setTimeout(() => controller.abort(), 10000)
+		const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 		try {
 			const response = await fetch(PRICING_URL, {
 				method: 'POST',
@@ -42,8 +50,10 @@ export async function getTldPricing() {
 			}
 			const value = { source: 'Porkbun', currency: 'USD', fetchedAt: new Date().toISOString(), byTld }
 			state.data = { value, expiresAt: Date.now() + PRICING_TTL }
+			state.failedUntil = 0
 			return value
 		} catch {
+			state.failedUntil = Date.now() + FAILURE_TTL
 			return state.data?.value || null
 		} finally {
 			clearTimeout(timer)

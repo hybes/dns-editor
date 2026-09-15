@@ -16,8 +16,22 @@ const EXTRA_SERVERS = {
 	ch: 'https://rdap.nic.ch/'
 }
 
-const state = globalThis.__rdapState || { bootstrap: null, bootstrapPromise: null, results: new Map() }
+// A failed directory fetch is remembered only briefly: long enough that one search does
+// not wait on IANA once per name, short enough that the next search tries again.
+const BOOTSTRAP_FAILURE_TTL = 15 * 1000
+
+const state = globalThis.__rdapState || {
+	bootstrap: null,
+	bootstrapPromise: null,
+	bootstrapFailure: null,
+	results: new Map()
+}
 if (!globalThis.__rdapState) globalThis.__rdapState = state
+
+const describeBootstrapError = (error) => {
+	if (error?.name === 'AbortError') return 'The RDAP directory at IANA did not respond in time'
+	return error?.message || 'Could not load the RDAP directory from IANA'
+}
 
 const fetchWithTimeout = async (url, { timeoutMs = 8000, headers = {} } = {}) => {
 	const controller = new AbortController()
@@ -32,12 +46,16 @@ const fetchWithTimeout = async (url, { timeoutMs = 8000, headers = {} } = {}) =>
 const loadBootstrap = async () => {
 	const now = Date.now()
 	if (state.bootstrap && state.bootstrap.expiresAt > now) return state.bootstrap.map
+	if (state.bootstrapFailure && state.bootstrapFailure.until > now) {
+		if (state.bootstrap?.map) return state.bootstrap.map
+		throw new Error(state.bootstrapFailure.message)
+	}
 	if (state.bootstrapPromise) return state.bootstrapPromise
 
 	state.bootstrapPromise = (async () => {
 		try {
 			const response = await fetchWithTimeout(BOOTSTRAP_URL, { timeoutMs: 10000 })
-			if (!response.ok) throw new Error(`IANA bootstrap returned HTTP ${response.status}`)
+			if (!response.ok) throw new Error(`The RDAP directory at IANA responded with HTTP ${response.status}`)
 			const data = await response.json()
 			const map = new Map()
 			for (const [tlds, urls] of data?.services || []) {
@@ -46,11 +64,14 @@ const loadBootstrap = async () => {
 				for (const tld of tlds) map.set(String(tld).toLowerCase(), url.endsWith('/') ? url : `${url}/`)
 			}
 			state.bootstrap = { map, expiresAt: Date.now() + BOOTSTRAP_TTL }
+			state.bootstrapFailure = null
 			return map
 		} catch (error) {
+			const message = describeBootstrapError(error)
+			state.bootstrapFailure = { message, until: Date.now() + BOOTSTRAP_FAILURE_TTL }
 			// Keep serving a stale copy rather than failing every search while IANA is unreachable.
 			if (state.bootstrap?.map) return state.bootstrap.map
-			throw error
+			throw new Error(message, { cause: error })
 		} finally {
 			state.bootstrapPromise = null
 		}
@@ -107,13 +128,15 @@ const sweepResults = () => {
 }
 
 // Returns { supported, available: true | false | null, reason, ...registration details }.
+// supported is null when the RDAP directory itself could not be loaded.
 export async function rdapDomain(domain) {
 	const cached = state.results.get(domain)
 	if (cached && cached.expiresAt > Date.now()) return { ...cached.value }
 
 	const result = await lookup(domain)
-	// Rate-limit and transport failures are not worth remembering.
-	if (result.available !== null || !result.supported) {
+	// Only definite answers are remembered: a registration state, or a registry without RDAP.
+	// Rate limits, timeouts and directory failures are tried again on the next search.
+	if (result.available !== null || result.supported === false) {
 		state.results.set(domain, { value: result, expiresAt: Date.now() + RESULT_TTL })
 		sweepResults()
 	}
@@ -125,7 +148,7 @@ const lookup = async (domain) => {
 	try {
 		server = await getRdapServer(domain)
 	} catch (error) {
-		return { supported: false, available: null, reason: error?.message || 'Could not load the RDAP directory' }
+		return { supported: null, available: null, reason: error?.message || 'Could not load the RDAP directory' }
 	}
 	if (!server) {
 		return {

@@ -1,97 +1,70 @@
 <template>
-	<PageContainer>
-		<Head>
-			<Title>Propagation Check</Title>
-		</Head>
+	<UDashboardPanel id="tool-propagation">
+		<template #header>
+			<UDashboardNavbar title="Propagation Check">
+				<template #leading>
+					<UDashboardSidebarCollapse />
+				</template>
+			</UDashboardNavbar>
+		</template>
 
-		<section aria-labelledby="propagation-title" class="mx-auto flex w-full max-w-6xl flex-col gap-6">
-			<UButton :to="backTo" variant="ghost" color="neutral" icon="i-clarity-undo-line" class="self-start">
-				{{ backLabel }}
-			</UButton>
+		<template #body>
+			<p role="status" class="sr-only">{{ announcement }}</p>
 
-			<header>
-				<p class="text-primary text-xs font-semibold tracking-wide uppercase">Tools</p>
-				<h1
-					id="propagation-title"
-					class="text-highlighted mt-1 text-2xl font-semibold tracking-tight sm:text-3xl"
-				>
-					Propagation Check
-				</h1>
-				<p class="text-muted mt-2 max-w-2xl text-sm">
-					Ask the zone’s own nameservers and {{ resolverCountLabel }} public resolvers for a record, and see
-					which of them have picked up your latest change.
+			<form class="flex flex-col gap-3" novalidate @submit.prevent="submitCheck">
+				<p class="text-muted text-sm">
+					Compare what the zone’s own nameservers and {{ resolverCount }} public resolvers return for a
+					record, to see which resolvers have picked up a change.
 				</p>
-			</header>
 
-			<form class="surface-panel flex flex-col gap-4 p-4 sm:p-6" @submit.prevent="runCheck()">
-				<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_9rem_minmax(0,1fr)]">
-					<UFormField
-						label="Name"
-						name="propagation-name"
-						:error="inputError || undefined"
-						class="sm:col-span-2 lg:col-span-1"
-					>
+				<div
+					class="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_9rem_minmax(0,1fr)_auto] lg:items-start"
+				>
+					<UFormField label="Name" :error="inputError || undefined" class="sm:col-span-2 lg:col-span-1">
 						<UInput
-							id="propagation-name"
+							ref="nameInput"
 							v-model="name"
-							size="lg"
-							icon="i-heroicons-globe-alt"
+							icon="i-lucide-globe"
 							placeholder="www.example.com"
 							autocomplete="off"
 							autocapitalize="off"
 							:spellcheck="false"
 							class="w-full"
+							@update:model-value="inputError = ''"
 						/>
 					</UFormField>
-					<UFormField label="Record type" name="propagation-type">
+					<UFormField label="Record type" :error="typeError || undefined">
 						<USelect
+							ref="typeSelect"
 							v-model="type"
 							:items="typeOptions"
-							size="lg"
+							placeholder="Choose a type"
 							class="w-full"
-							aria-label="Record type"
+							@update:model-value="onTypeChosen"
 						/>
 					</UFormField>
 					<UFormField
 						label="Expected value"
-						name="propagation-expected"
-						help="Optional. Leave blank to compare every resolver against the zone’s nameservers."
+						hint="Optional"
+						help="Leave blank to compare resolvers with the zone’s nameservers."
+						:error="expectedError || undefined"
 					>
 						<UInput
-							id="propagation-expected"
 							v-model="expected"
-							size="lg"
-							icon="i-heroicons-check-badge"
-							placeholder="e.g. 203.0.113.10"
+							placeholder="203.0.113.10"
 							autocomplete="off"
 							autocapitalize="off"
 							:spellcheck="false"
-							class="w-full font-mono"
+							class="w-full"
+							:ui="{ base: 'font-mono' }"
+							@update:model-value="expectedError = ''"
 						/>
 					</UFormField>
-				</div>
-
-				<UAlert
-					v-if="proxied"
-					color="info"
-					variant="subtle"
-					icon="i-heroicons-cloud"
-					title="Proxied record"
-					description="This record is proxied through Cloudflare, so resolvers return Cloudflare’s edge addresses rather than the origin value. The check compares against the nameservers instead."
-				/>
-
-				<div class="flex flex-wrap items-center justify-between gap-3">
-					<p class="text-muted text-xs">
-						Each resolver is asked directly. A stale one keeps its old answer until its cached TTL runs out;
-						nothing can force it sooner.
-					</p>
 					<UButton
 						type="submit"
-						color="primary"
-						size="lg"
-						icon="i-heroicons-signal"
-						:loading="loading"
-						:disabled="!name.trim()"
+						icon="i-lucide-radar"
+						:loading="loading && !silentLoading"
+						class="justify-center sm:col-span-2 lg:col-span-1 lg:mt-6"
 					>
 						Check
 					</UButton>
@@ -99,296 +72,399 @@
 			</form>
 
 			<UAlert
-				v-if="error"
-				color="error"
+				v-if="unsupportedType"
+				color="warning"
 				variant="subtle"
-				icon="i-heroicons-exclamation-triangle"
-				title="Check Failed"
-				:description="error"
+				icon="i-lucide-triangle-alert"
+				:title="`${unsupportedType} records can’t be checked for propagation`"
+				:description="`This check compares ${PROPAGATION_TYPES.join(', ')} records. DNS Lookup can show what Cloudflare and Google return for ${unsupportedType} records.`"
+				:actions="[
+					{
+						label: 'Open in DNS Lookup',
+						icon: 'i-lucide-text-search',
+						color: 'neutral',
+						variant: 'outline',
+						to: unsupportedLookupLink
+					}
+				]"
 			/>
 
-			<template v-if="result">
-				<section class="surface-panel p-4 sm:p-6" aria-labelledby="propagation-summary" aria-live="polite">
-					<div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-						<div class="min-w-0">
-							<div class="flex flex-wrap items-center gap-2">
+			<UAlert
+				v-if="showProxiedNotice"
+				color="info"
+				variant="subtle"
+				icon="i-lucide-cloud"
+				title="This record is proxied"
+				description="Resolvers return Cloudflare’s edge addresses rather than the origin value, so they are compared with the zone’s nameservers instead."
+			/>
+
+			<UAlert
+				v-if="error"
+				role="alert"
+				color="error"
+				variant="subtle"
+				icon="i-lucide-circle-alert"
+				:title="errorTitle"
+				:description="error"
+				:actions="[
+					{
+						label: 'Try again',
+						icon: 'i-lucide-refresh-cw',
+						color: 'neutral',
+						variant: 'outline',
+						onClick: retry
+					}
+				]"
+			/>
+
+			<p v-if="loading && !silentLoading && pending" class="text-muted flex items-center gap-2 text-sm">
+				<UIcon
+					name="i-lucide-loader-circle"
+					class="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+					aria-hidden="true"
+				/>
+				<span>
+					Asking the zone’s nameservers and {{ resolverCount }} public resolvers about
+					<span class="font-mono break-all">{{ pending.name }}</span
+					>. This can take up to 20 seconds.
+				</span>
+			</p>
+
+			<div
+				v-if="result && verdict"
+				class="flex flex-col gap-6 transition-opacity"
+				:class="{ 'opacity-50': loading && !silentLoading }"
+				:aria-busy="loading"
+			>
+				<section aria-labelledby="propagation-verdict">
+					<div class="flex flex-wrap items-start gap-x-4 gap-y-3">
+						<div class="min-w-0 flex-1">
+							<h2
+								id="propagation-verdict"
+								class="text-highlighted flex items-start gap-2 text-lg font-semibold"
+							>
 								<UIcon
 									:name="verdict.icon"
-									:class="verdict.iconClass"
-									class="h-6 w-6"
+									class="mt-1 size-5 shrink-0"
+									:class="TONE_TEXT[verdict.tone]"
 									aria-hidden="true"
 								/>
-								<h2 id="propagation-summary" class="text-highlighted text-xl font-semibold">
-									{{ verdict.title }}
-								</h2>
-							</div>
+								<span>{{ verdict.title }}</span>
+							</h2>
 							<p class="text-muted mt-1 text-sm">{{ verdict.detail }}</p>
 							<p class="mt-2 flex flex-wrap items-center gap-2 text-sm">
 								<span class="text-highlighted font-mono break-all">{{ result.name }}</span>
-								<UBadge color="neutral" variant="subtle">{{ result.type }}</UBadge>
-								<UBadge v-if="result.reference?.source === 'expected'" color="info" variant="subtle">
-									Looking for {{ result.reference.expected }}
+								<UBadge color="neutral" variant="subtle" size="sm">{{ result.type }}</UBadge>
+								<UBadge
+									v-if="result.reference?.source === 'expected'"
+									color="info"
+									variant="subtle"
+									size="sm"
+									class="max-w-full"
+								>
+									<span class="truncate">Looking for {{ result.reference.expected }}</span>
 								</UBadge>
 							</p>
+							<p v-if="result.wildcard" class="text-muted mt-1 text-xs">
+								Checked through <span class="font-mono break-all">{{ result.queriedName }}</span
+								>, a name the wildcard covers.
+							</p>
 						</div>
-						<div class="flex flex-wrap items-center gap-3">
-							<USwitch v-model="autoRecheck" label="Re-check every 30 s" :disabled="loading" />
+						<div class="flex flex-wrap items-center gap-2">
 							<UButton
+								size="sm"
 								variant="outline"
 								color="neutral"
-								icon="i-heroicons-arrow-path"
-								:loading="loading"
-								@click="runCheck()"
+								icon="i-lucide-text-search"
+								:to="lookupLink"
 							>
-								Check Again
+								Open in DNS Lookup
+							</UButton>
+							<UButton
+								size="sm"
+								variant="outline"
+								color="neutral"
+								icon="i-lucide-copy"
+								@click="copy(JSON.stringify(result, null, 2), 'Propagation result JSON')"
+							>
+								Copy JSON
 							</UButton>
 						</div>
 					</div>
 
-					<div class="mt-4">
-						<div class="bg-muted h-2 w-full overflow-hidden rounded-full" role="presentation">
-							<div
-								class="h-full rounded-full transition-[width]"
-								:class="verdict.barClass"
-								:style="{ width: `${progressPercent}%` }"
-							/>
-						</div>
-						<div class="text-muted mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
-							<span>{{ result.summary.matched }} up to date</span>
-							<span>{{ result.summary.stale }} stale</span>
-							<span v-if="result.summary.unknown">{{ result.summary.unknown }} unreachable</span>
-							<span v-if="result.summary.maxStaleTtl !== null">
-								Stale caches expire within {{ formatDuration(result.summary.maxStaleTtl) }}
-							</span>
-							<span class="sm:ml-auto">Checked at {{ checkedAtLabel }}</span>
-						</div>
-					</div>
-				</section>
+					<UProgress
+						v-if="result.summary.total"
+						:model-value="result.summary.matched"
+						:max="result.summary.total"
+						:color="verdict.tone"
+						size="sm"
+						class="mt-4"
+						aria-hidden="true"
+					/>
+					<p class="text-muted mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
+						<span>{{ result.summary.matched }} up to date</span>
+						<span>{{ result.summary.stale }} stale</span>
+						<span v-if="result.summary.unknown">{{ result.summary.unknown }} not compared</span>
+						<span v-if="result.summary.maxStaleTtl !== null">
+							Stale caches expire within {{ formatDuration(result.summary.maxStaleTtl) }}
+						</span>
+						<span class="sm:ms-auto">
+							Checked at <time :datetime="result.checkedAt">{{ formatTime(result.checkedAt) }}</time>
+						</span>
+					</p>
 
-				<section class="surface-panel overflow-hidden" aria-labelledby="nameservers-heading">
-					<header class="border-default flex flex-wrap items-center gap-2 border-b px-4 py-3">
-						<h2 id="nameservers-heading" class="text-highlighted font-semibold">Zone nameservers</h2>
-						<span v-if="result.zone.apex" class="text-dimmed font-mono text-xs">{{
-							result.zone.apex
-						}}</span>
-						<UBadge
-							v-if="result.zone.agree === true"
-							color="success"
-							variant="subtle"
-							icon="i-heroicons-check-circle-20-solid"
-							class="ml-auto"
-						>
-							Nameservers agree
-						</UBadge>
-						<UBadge
-							v-else-if="result.zone.agree === false"
-							color="warning"
-							variant="subtle"
-							icon="i-heroicons-exclamation-triangle-20-solid"
-							class="ml-auto"
-						>
-							Nameservers disagree
-						</UBadge>
-					</header>
-					<p v-if="result.zone.error" class="text-error px-4 py-4 text-sm">{{ result.zone.error }}</p>
-					<div v-else class="overflow-x-auto">
-						<table class="w-full text-left text-sm">
-							<thead class="text-muted text-xs uppercase">
-								<tr class="border-default border-b">
-									<th scope="col" class="px-4 py-2 font-semibold">Nameserver</th>
-									<th scope="col" class="px-2 py-2 font-semibold">Result</th>
-									<th scope="col" class="px-2 py-2 font-semibold">Answer</th>
-									<th scope="col" class="px-2 py-2 text-right font-semibold">Serial</th>
-									<th scope="col" class="px-4 py-2 text-right font-semibold">Time</th>
-								</tr>
-							</thead>
-							<tbody class="divide-default divide-y">
-								<tr v-for="ns in result.zone.nameservers" :key="ns.host" class="align-top">
-									<td class="px-4 py-2">
-										<div class="text-highlighted font-mono text-xs">{{ ns.host }}</div>
-										<div class="text-dimmed font-mono text-xs">{{ ns.ip || '—' }}</div>
-									</td>
-									<td class="px-2 py-2">
-										<UBadge :color="outcome(ns).color" variant="subtle" size="sm">
-											{{ outcome(ns).label }}
-										</UBadge>
-									</td>
-									<td class="px-2 py-2 font-mono text-xs break-all">
-										<AnswerCell :server="ns" />
-									</td>
-									<td class="text-muted px-2 py-2 text-right font-mono text-xs tabular-nums">
-										{{ ns.serial ?? '—' }}
-									</td>
-									<td class="text-dimmed px-4 py-2 text-right text-xs whitespace-nowrap tabular-nums">
-										{{ ns.durationMs }} ms
-									</td>
-								</tr>
-							</tbody>
-						</table>
-					</div>
-				</section>
-
-				<section class="surface-panel overflow-hidden" aria-labelledby="resolvers-heading">
-					<header class="border-default flex flex-wrap items-center gap-2 border-b px-4 py-3">
-						<h2 id="resolvers-heading" class="text-highlighted font-semibold">Public resolvers</h2>
-						<span class="text-dimmed text-xs">{{ result.resolvers.length }} queried</span>
+					<div class="border-default mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-3">
+						<USwitch v-model="autoRecheck" :label="recheckLabel" />
+						<p v-if="autoRecheck && (silentLoading || nextCheckAt)" class="text-muted text-xs">
+							<template v-if="silentLoading">Checking now…</template>
+							<template v-else>
+								Next check at <time :datetime="nextCheckAt">{{ formatTime(nextCheckAt) }}</time>
+							</template>
+						</p>
 						<UButton
-							size="xs"
+							size="sm"
 							variant="outline"
 							color="neutral"
-							icon="i-clarity-clipboard-line"
-							class="ml-auto"
-							@click="copyJson"
+							icon="i-lucide-refresh-cw"
+							:loading="loading && !silentLoading"
+							class="sm:ms-auto"
+							@click="checkAgain"
 						>
-							Copy JSON
+							Check again
 						</UButton>
-					</header>
-					<div class="overflow-x-auto">
-						<table class="w-full text-left text-sm">
-							<thead class="text-muted text-xs uppercase">
-								<tr class="border-default border-b">
-									<th scope="col" class="px-4 py-2 font-semibold">Resolver</th>
-									<th scope="col" class="px-2 py-2 font-semibold">Result</th>
-									<th scope="col" class="px-2 py-2 font-semibold">Answer</th>
-									<th scope="col" class="px-2 py-2 text-right font-semibold">TTL</th>
-									<th scope="col" class="px-4 py-2 text-right font-semibold">Time</th>
-								</tr>
-							</thead>
-							<tbody class="divide-default divide-y">
-								<tr v-for="resolver in result.resolvers" :key="resolver.id" class="align-top">
-									<td class="px-4 py-2">
-										<div class="text-highlighted text-xs font-medium">{{ resolver.label }}</div>
-										<div class="text-dimmed text-xs">
-											{{ resolver.region }} · <span class="font-mono">{{ resolver.ip }}</span>
-										</div>
-									</td>
-									<td class="px-2 py-2">
-										<UBadge :color="outcome(resolver).color" variant="subtle" size="sm">
-											{{ outcome(resolver).label }}
-										</UBadge>
-									</td>
-									<td class="px-2 py-2 font-mono text-xs break-all">
-										<AnswerCell :server="resolver" />
-									</td>
-									<td class="text-muted px-2 py-2 text-right font-mono text-xs tabular-nums">
-										{{ resolver.ttl ?? '—' }}
-									</td>
-									<td class="text-dimmed px-4 py-2 text-right text-xs whitespace-nowrap tabular-nums">
-										{{ resolver.durationMs }} ms
-									</td>
-								</tr>
-							</tbody>
-						</table>
 					</div>
-					<p class="text-dimmed border-default border-t px-4 py-3 text-xs">
-						TTL is the time the resolver will keep its current answer; it is only reported for A and AAAA
-						records. Need the full record set with DNSSEC flags?
-						<NuxtLink :to="lookupLink" class="text-primary underline-offset-2 hover:underline">
-							Open this name in DNS Lookup.
-						</NuxtLink>
-					</p>
 				</section>
-			</template>
-		</section>
-	</PageContainer>
+
+				<section v-for="section in sections" :key="section.id" :aria-labelledby="`${section.id}-heading`">
+					<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+						<h2 :id="`${section.id}-heading`" class="text-highlighted text-sm font-semibold">
+							{{ section.title }}
+						</h2>
+						<span
+							v-if="section.note"
+							class="text-dimmed text-xs"
+							:class="{ 'font-mono': section.noteMono }"
+						>
+							{{ section.note }}
+						</span>
+						<UBadge
+							v-if="section.badge"
+							:color="section.badge.color"
+							:icon="section.badge.icon"
+							variant="subtle"
+							size="sm"
+							class="ms-auto"
+						>
+							{{ section.badge.label }}
+						</UBadge>
+					</div>
+
+					<p v-if="section.error" class="text-error mt-2 text-sm">{{ section.error }}</p>
+					<ul v-else class="divide-default border-default mt-2 divide-y border-y">
+						<li
+							v-for="row in section.rows"
+							:key="row.key"
+							class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1.5 py-2.5 md:grid-cols-[minmax(0,13rem)_8rem_minmax(0,1fr)_5.5rem]"
+						>
+							<div class="min-w-0">
+								<p
+									class="text-highlighted text-xs font-medium wrap-anywhere"
+									:class="{ 'font-mono': row.mono }"
+								>
+									{{ row.title }}
+								</p>
+								<p class="text-dimmed text-xs wrap-anywhere">{{ row.subtitle }}</p>
+							</div>
+							<div class="justify-self-end md:justify-self-start">
+								<UBadge :color="row.outcome.color" variant="subtle" size="sm">{{
+									row.outcome.label
+								}}</UBadge>
+							</div>
+							<div class="col-span-2 min-w-0 md:col-span-1">
+								<ul
+									v-if="row.values.length"
+									class="space-y-0.5"
+									:aria-label="`Answer from ${row.title}`"
+								>
+									<li
+										v-for="(value, index) in row.values"
+										:key="index"
+										class="flex items-start gap-1"
+									>
+										<span class="text-highlighted min-w-0 flex-1 font-mono text-xs wrap-anywhere">
+											{{ value }}
+										</span>
+										<UButton
+											size="xs"
+											variant="ghost"
+											color="neutral"
+											icon="i-lucide-copy"
+											class="-my-1 shrink-0"
+											:aria-label="`Copy ${shorten(value)} from ${row.title}`"
+											@click="copyValue(value)"
+										/>
+									</li>
+								</ul>
+								<p v-else class="text-muted text-xs">{{ row.failure }}</p>
+							</div>
+							<p
+								class="text-dimmed col-span-2 flex flex-wrap gap-x-3 text-xs tabular-nums md:col-span-1 md:flex-col md:items-end"
+							>
+								<span v-for="item in row.meta" :key="item">{{ item }}</span>
+							</p>
+						</li>
+					</ul>
+					<p v-if="section.footnote" class="text-dimmed mt-2 text-xs">{{ section.footnote }}</p>
+				</section>
+			</div>
+		</template>
+	</UDashboardPanel>
 </template>
 
 <script setup>
-import { defineComponent, h } from 'vue'
-import { useIntervalFn } from '@vueuse/core'
+import { useDocumentVisibility } from '@vueuse/core'
+import { PROPAGATION_TYPES } from '#shared/utils/dnsTypes'
 
 const route = useRoute()
 const router = useRouter()
-const toast = useToast()
+const { call } = useCfApi()
+const { copy, success } = useNotify()
 
-const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'SRV', 'CAA', 'PTR']
-const RESOLVER_COUNT = 15
+// Mirrors PUBLIC_RESOLVERS in server/utils/dnsResolve.js. The page needs the count before
+// its first check; after that the result's own figures are used.
+const DEFAULT_RESOLVER_COUNT = 15
+const DEFAULT_QUERY_TIMEOUT_MS = 4000
 const RECHECK_INTERVAL_MS = 30000
+const COPY_LABEL_LENGTH = 48
 
-const typeOptions = RECORD_TYPES.map((t) => ({ label: t, value: t }))
-const resolverCountLabel = String(RESOLVER_COUNT)
+const typeOptions = PROPAGATION_TYPES.map((t) => ({ label: t, value: t }))
+const recheckLabel = `Re-check every ${RECHECK_INTERVAL_MS / 1000} seconds`
+const TONE_TEXT = { success: 'text-success', warning: 'text-warning', neutral: 'text-muted' }
 
 const queryString = (value) => (typeof value === 'string' ? value : '')
-const initialType = queryString(route.query.type).toUpperCase()
+const normaliseName = (value) =>
+	String(value || '')
+		.trim()
+		.toLowerCase()
+		.replace(/\.$/, '')
 
-const name = ref(queryString(route.query.name))
-const type = ref(RECORD_TYPES.includes(initialType) ? initialType : 'A')
-const expected = ref(queryString(route.query.expected))
-const proxied = ref(route.query.proxied === '1')
+const name = ref('')
+const type = ref('A')
+const expected = ref('')
+// The name a proxied=1 link arrived with; the notice only applies while that name is checked.
+const proxiedFor = ref('')
+const unsupportedType = ref('')
 const loading = ref(false)
+const silentLoading = ref(false)
+const pending = ref(null)
+const lastAttempt = ref(null)
 const error = ref('')
+const errorTitle = ref('Check failed')
 const inputError = ref('')
+const typeError = ref('')
+const expectedError = ref('')
+const nameInput = useTemplateRef('nameInput')
+const typeSelect = useTemplateRef('typeSelect')
 const result = ref(null)
+// Parameters of the check on screen. Auto re-check repeats these, never the live form.
+const snapshot = ref(null)
 const autoRecheck = ref(false)
+const nextCheckAt = ref('')
+const announcement = ref('')
+const visibility = useDocumentVisibility()
 
-const zoneParam = computed(() => queryString(route.query.zone))
-const backTo = computed(() => (zoneParam.value ? `/zones/${zoneParam.value}/records` : '/zones'))
-const backLabel = computed(() => (zoneParam.value ? 'Back to Records' : 'Back to Zones'))
+let requestId = 0
+let routeKey = null
+let recheckTimer = null
+let lastCheckedAt = 0
 
-const lookupLink = computed(() => ({
-	path: '/tools/dns-lookup',
-	query: {
-		name: result.value?.name || name.value,
-		type: result.value?.type || type.value,
-		zone: zoneParam.value || undefined
+useSeoMeta({
+	title: () => (result.value ? `${result.value.name} ${result.value.type} · Propagation Check` : 'Propagation Check')
+})
+
+const resolverCount = computed(() => result.value?.resolvers.length || DEFAULT_RESOLVER_COUNT)
+const showProxiedNotice = computed(
+	() => Boolean(proxiedFor.value) && proxiedFor.value === normaliseName(name.value) && !expected.value.trim()
+)
+
+const zoneQuery = () => queryString(route.query.zone) || undefined
+
+const lookupLink = computed(() => {
+	const data = result.value
+	return {
+		path: '/tools/dns-lookup',
+		query: {
+			name: data ? (data.wildcard ? data.queriedName : data.input) : undefined,
+			type: data?.type,
+			zone: zoneQuery()
+		}
 	}
+})
+
+const unsupportedLookupLink = computed(() => ({
+	path: '/tools/dns-lookup',
+	query: { name: name.value.trim() || undefined, type: unsupportedType.value, zone: zoneQuery() }
 }))
 
-const checkedAtLabel = computed(() => {
-	if (!result.value?.checkedAt) return ''
-	return new Date(result.value.checkedAt).toLocaleTimeString('en-GB')
-})
-
-const progressPercent = computed(() => {
-	const summary = result.value?.summary
-	if (!summary || !summary.total) return 0
-	return Math.round((summary.matched / summary.total) * 100)
-})
-
-const referenceLabel = computed(() => {
-	const reference = result.value?.reference
-	if (!reference) return ''
-	return reference.source === 'expected' ? 'return the expected value' : 'agree with the zone’s nameservers'
-})
-
 const verdict = computed(() => {
-	const summary = result.value?.summary
-	const base = { icon: 'i-heroicons-question-mark-circle', iconClass: 'text-muted', barClass: 'bg-neutral-400' }
-	if (!summary) return { ...base, title: '', detail: '' }
-	const counts = `${summary.matched} of ${summary.total} resolvers ${referenceLabel.value}.`
+	const data = result.value
+	const summary = data?.summary
+	if (!summary) return null
+	const reference = data.reference
+	// Nameservers with nothing to say while resolvers still answer means a removal is propagating.
+	const removal = reference?.source === 'authoritative' && !reference.values.length
+	const compared =
+		reference?.source === 'expected' ? 'return the expected value' : 'agree with the zone’s nameservers'
+	const counts = `${summary.matched} of ${summary.total} resolvers ${compared}.`
+	const stillCached = `The zone’s nameservers return no ${data.type} records, but ${summary.stale} of ${summary.total} resolvers still have an old answer cached.`
 	switch (summary.state) {
 		case 'propagated':
 			return {
-				icon: 'i-heroicons-check-circle',
-				iconClass: 'text-success',
-				barClass: 'bg-success',
-				title: 'Propagated everywhere we asked',
+				tone: 'success',
+				icon: 'i-lucide-circle-check',
+				title: 'Propagated to every resolver that answered',
 				detail: counts
+			}
+		case 'absent':
+			return {
+				tone: 'neutral',
+				icon: 'i-lucide-circle-slash',
+				title: `No ${data.type} records exist anywhere we asked`,
+				detail: `The zone’s nameservers and every resolver that answered return nothing for ${data.name}.`
 			}
 		case 'partial':
 			return {
-				icon: 'i-heroicons-arrow-path',
-				iconClass: 'text-warning',
-				barClass: 'bg-warning',
-				title: 'Still propagating',
-				detail: counts
+				tone: 'warning',
+				icon: 'i-lucide-hourglass',
+				title: removal ? 'Removal still propagating' : 'Still propagating',
+				detail: removal ? stillCached : counts
 			}
 		case 'none':
 			return {
-				icon: 'i-heroicons-clock',
-				iconClass: 'text-warning',
-				barClass: 'bg-warning',
-				title: 'Not visible on public resolvers yet',
-				detail: counts
+				tone: 'warning',
+				icon: 'i-lucide-clock',
+				title: removal ? 'Removal not visible on public resolvers yet' : 'Not visible on public resolvers yet',
+				detail: removal ? stillCached : counts
 			}
-		default:
+		default: {
+			const alias = data.zone.nameservers.find((server) => server.cname)?.cname
+			if (!reference && alias) {
+				return {
+					tone: 'neutral',
+					icon: 'i-lucide-corner-down-right',
+					title: `${data.name} is a CNAME`,
+					detail: `The zone’s nameservers point it at ${alias} instead of returning ${data.type} records, so there is nothing of theirs to compare resolvers with. Choose CNAME to check the alias, or enter the ${data.type} value you expect.`
+				}
+			}
 			return {
-				...base,
-				title: 'Could not judge propagation',
-				detail: result.value?.reference
-					? 'None of the resolvers answered, so there is nothing to compare.'
-					: 'The zone’s nameservers could not be reached and no expected value was given.'
+				tone: 'neutral',
+				icon: 'i-lucide-circle-help',
+				title: 'Couldn’t judge propagation',
+				detail: reference
+					? 'None of the public resolvers gave an answer that could be compared.'
+					: 'The zone’s nameservers couldn’t be reached and no expected value was given, so there is nothing to compare against.'
 			}
+		}
 	}
 })
 
@@ -397,38 +473,88 @@ const outcome = (server) => {
 	if (server.match === false) {
 		return server.ok ? { label: 'Stale', color: 'warning' } : { label: 'Not yet visible', color: 'warning' }
 	}
+	if (server.cname) return { label: 'CNAME', color: 'neutral' }
 	if (server.ok) return { label: 'Answered', color: 'neutral' }
 	if (server.status === 'nxdomain') return { label: 'Name not found', color: 'neutral' }
 	if (server.status === 'nodata') return { label: 'No records', color: 'neutral' }
 	if (server.status === 'timeout') return { label: 'Timed out', color: 'neutral' }
+	if (server.status === 'blocked') return { label: 'Not queried', color: 'neutral' }
 	if (server.status === 'refused') return { label: 'Refused', color: 'error' }
 	if (server.status === 'servfail') return { label: 'Server failure', color: 'error' }
 	return { label: 'Error', color: 'error' }
 }
 
 const statusText = (server) => {
-	if (server.status === 'nxdomain') return 'NXDOMAIN'
-	if (server.status === 'nodata') return 'no records of this type'
-	if (server.status === 'timeout') return 'no reply within 4 s'
+	if (server.cname) return `CNAME to ${server.cname}`
+	if (server.status === 'nxdomain') return 'The name doesn’t exist (NXDOMAIN)'
+	if (server.status === 'nodata') return `No ${result.value.type} records`
+	if (server.status === 'timeout') {
+		const seconds = (result.value.limits?.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS) / 1000
+		return `No reply within ${seconds} s`
+	}
 	return server.error || server.status
 }
 
-// Answer values as a list, or the failure reason when there is nothing to show.
-const AnswerCell = defineComponent({
-	props: { server: { type: Object, required: true } },
-	setup(props) {
-		return () => {
-			const { server } = props
-			if (server.ok && server.values.length) {
-				return h(
-					'ul',
-					{ class: 'space-y-0.5' },
-					server.values.map((value) => h('li', { class: 'text-highlighted' }, value))
-				)
-			}
-			return h('span', { class: 'text-dimmed' }, statusText(server))
-		}
+const serverRow = (server, { key, title, subtitle, mono, extra }) => ({
+	key,
+	title,
+	subtitle,
+	mono,
+	outcome: outcome(server),
+	values: server.ok ? server.values : [],
+	failure: server.ok && server.values.length ? '' : statusText(server),
+	meta: [extra, `${server.durationMs} ms`].filter(Boolean)
+})
+
+const sections = computed(() => {
+	const data = result.value
+	if (!data) return []
+	const { zone } = data
+	let zoneBadge = null
+	if (zone.agree === true) zoneBadge = { label: 'Nameservers agree', color: 'success', icon: 'i-lucide-check' }
+	if (zone.agree === false) {
+		zoneBadge = { label: 'Nameservers disagree', color: 'warning', icon: 'i-lucide-triangle-alert' }
 	}
+	return [
+		{
+			id: 'nameservers',
+			title: 'Zone nameservers',
+			note: zone.apex,
+			noteMono: true,
+			badge: zoneBadge,
+			error: zone.error,
+			rows: zone.nameservers.map((ns) =>
+				serverRow(ns, {
+					key: ns.host,
+					title: ns.host,
+					subtitle: ns.ip || 'No address found',
+					mono: true,
+					extra: ns.serial !== null && ns.serial !== undefined ? `Serial ${ns.serial}` : ''
+				})
+			)
+		},
+		{
+			id: 'resolvers',
+			title: 'Public resolvers',
+			note: `${data.resolvers.length} asked`,
+			noteMono: false,
+			badge: null,
+			error: '',
+			rows: data.resolvers.map((resolver) =>
+				serverRow(resolver, {
+					key: resolver.id,
+					title: resolver.label,
+					subtitle: `${resolver.region} · ${resolver.ip}`,
+					mono: false,
+					extra: resolver.ttl !== null && resolver.ttl !== undefined ? `TTL ${resolver.ttl}` : ''
+				})
+			),
+			footnote:
+				data.type === 'A' || data.type === 'AAAA'
+					? 'TTL is how long each resolver will keep serving its current answer.'
+					: `Resolvers only report TTL for A and AAAA records, so none is shown for ${data.type}.`
+		}
+	]
 })
 
 const formatDuration = (seconds) => {
@@ -437,89 +563,255 @@ const formatDuration = (seconds) => {
 	return `${Math.round((seconds / 3600) * 10) / 10} h`
 }
 
-const copyJson = async () => {
-	try {
-		await navigator.clipboard.writeText(JSON.stringify(result.value, null, 2))
-		toast.add({
-			id: 'copy-propagation' + Date.now(),
-			title: 'Copied',
-			description: 'Result JSON copied to clipboard',
-			icon: 'i-clarity-check-circle-solid',
-			color: 'success',
-			duration: 2000
-		})
-	} catch {
-		toast.add({
-			id: 'copy-propagation-error' + Date.now(),
-			title: 'Copy Failed',
-			description: 'Clipboard is unavailable in this browser',
-			icon: 'i-clarity-warning-solid',
-			color: 'error',
-			duration: 3000
-		})
-	}
-}
+const shorten = (value) => (value.length > COPY_LABEL_LENGTH ? `${value.slice(0, COPY_LABEL_LENGTH - 1)}…` : value)
 
-const syncRouteQuery = () => {
-	const query = { ...route.query, name: name.value.trim(), type: type.value }
-	if (expected.value.trim()) query.expected = expected.value.trim()
-	else delete query.expected
+const copyValue = (value) => copy(value, value.length > COPY_LABEL_LENGTH ? 'Value' : value)
+
+const describeOutcome = (data) =>
+	`Check finished for ${data.name}: ${verdict.value?.title || 'done'}. ${data.summary.matched} of ${data.summary.total} resolvers up to date.`
+
+// URL handling. routeKey holds the last query this page read or wrote, so the watcher below
+// can ignore this page's own router.replace and react only to real navigation.
+const routeKeyFor = (query) =>
+	[
+		queryString(query.name).trim(),
+		queryString(query.type).trim().toUpperCase(),
+		queryString(query.expected),
+		query.proxied === '1' ? '1' : ''
+	].join('|')
+
+const replaceQuery = (query) => {
+	routeKey = routeKeyFor(query)
 	router.replace({ query })
 }
 
-const runCheck = async ({ silent = false } = {}) => {
-	const trimmed = name.value.trim()
-	inputError.value = ''
-	if (!trimmed) {
-		inputError.value = 'Enter the name to check.'
-		return
-	}
-	if (loading.value) return
+const writeQuery = (params) => {
+	const query = { ...route.query, name: params.name, type: params.type }
+	if (params.expected) query.expected = params.expected
+	else delete query.expected
+	if (params.proxied) query.proxied = '1'
+	else delete query.proxied
+	replaceQuery(query)
+}
 
+// Auto re-check
+const clearRecheckTimer = () => {
+	if (recheckTimer) clearTimeout(recheckTimer)
+	recheckTimer = null
+	nextCheckAt.value = ''
+}
+
+const scheduleRecheck = () => {
+	clearRecheckTimer()
+	if (!autoRecheck.value || !snapshot.value || loading.value) return
+	// Hidden tabs don't poll; becoming visible again reschedules, running at once if overdue.
+	if (visibility.value === 'hidden') return
+	const delay = Math.max(0, lastCheckedAt + RECHECK_INTERVAL_MS - Date.now())
+	nextCheckAt.value = new Date(Date.now() + delay).toISOString()
+	recheckTimer = setTimeout(() => {
+		recheckTimer = null
+		nextCheckAt.value = ''
+		runCheck(snapshot.value, { silent: true })
+	}, delay)
+}
+
+const cancelPending = () => {
+	requestId++
+	loading.value = false
+	silentLoading.value = false
+	pending.value = null
+}
+
+const clearResult = () => {
+	result.value = null
+	snapshot.value = null
+	autoRecheck.value = false
+	clearRecheckTimer()
+}
+
+const runCheck = async (params, { silent = false } = {}) => {
+	const id = ++requestId
+	clearRecheckTimer()
 	loading.value = true
-	error.value = ''
+	silentLoading.value = silent
+	pending.value = params
+	lastAttempt.value = params
+	if (!silent) {
+		error.value = ''
+		announcement.value = ''
+	}
 	try {
-		const data = await $fetch('/api/dns_propagation', {
-			method: 'POST',
-			body: { name: trimmed, type: type.value, expected: expected.value.trim() }
-		})
-		if (!data?.success) throw new Error(data?.errors?.[0]?.message || 'Check failed')
+		const data = await call(
+			'dns_propagation',
+			{ name: params.name, type: params.type, expected: params.expected },
+			{ auth: false, fallback: 'The propagation check failed' }
+		)
+		if (id !== requestId) return
+		const previousState = result.value?.summary.state
 		result.value = data.result
-		if (data.result.reverse) type.value = 'PTR'
-		syncRouteQuery()
-		if (autoRecheck.value && data.result.summary.state === 'propagated') {
+		snapshot.value = { ...params }
+		lastCheckedAt = Date.now()
+		error.value = ''
+		const { state } = data.result.summary
+		// Background checks only speak up when something changed.
+		if (!silent || state !== previousState) announcement.value = describeOutcome(data.result)
+		if (autoRecheck.value && (state === 'propagated' || state === 'absent')) {
 			autoRecheck.value = false
-			toast.add({
-				id: 'propagated' + Date.now(),
-				title: 'Propagated',
-				description: `${data.result.name} is up to date on every resolver that answered.`,
-				icon: 'i-clarity-check-circle-solid',
-				color: 'success',
-				duration: 5000
-			})
+			success(
+				state === 'propagated'
+					? `${data.result.name} has propagated`
+					: `No ${data.result.type} records remain for ${data.result.name}`,
+				'Every resolver that answered agrees, so auto re-check has stopped.'
+			)
 		}
 	} catch (e) {
-		if (!silent) result.value = null
-		const message = e?.data?.statusMessage || e?.statusMessage || e?.message || 'Check failed'
-		if (e?.statusCode === 400 || e?.data?.statusCode === 400) inputError.value = message
-		else error.value = message
+		if (id !== requestId) return
+		const message = describeError(e, 'The propagation check failed')
+		autoRecheck.value = false
+		if (silent) {
+			errorTitle.value = 'Re-check failed, so auto re-check has stopped'
+			error.value = message
+		} else {
+			clearResult()
+			// The alert announces other failures itself; a field error has no live region.
+			if (isInputError(e)) {
+				if (e.data?.data?.field === 'expected') expectedError.value = message
+				else inputError.value = message
+				announcement.value = `Check failed: ${message}`
+			} else {
+				errorTitle.value = 'Check failed'
+				error.value = message
+			}
+		}
 	} finally {
-		loading.value = false
+		if (id === requestId) {
+			loading.value = false
+			silentLoading.value = false
+			pending.value = null
+			scheduleRecheck()
+		}
 	}
 }
 
-const { pause, resume } = useIntervalFn(() => runCheck({ silent: true }), RECHECK_INTERVAL_MS, { immediate: false })
+const submitCheck = () => {
+	const trimmed = name.value.trim()
+	inputError.value = ''
+	typeError.value = ''
+	expectedError.value = ''
+	// Focusing the field reads its error, which is linked to it, to screen reader users.
+	if (!trimmed) {
+		inputError.value = 'Enter the name to check.'
+		nextTick(() => nameInput.value?.inputRef?.focus())
+		return
+	}
+	if (!type.value) {
+		typeError.value = 'Choose a record type.'
+		nextTick(() => typeSelect.value?.triggerRef?.focus())
+		return
+	}
+	unsupportedType.value = ''
+	const params = {
+		name: trimmed,
+		type: type.value,
+		expected: expected.value.trim(),
+		proxied: Boolean(proxiedFor.value) && proxiedFor.value === normaliseName(trimmed)
+	}
+	writeQuery(params)
+	runCheck(params)
+}
+
+const checkAgain = () => {
+	if (snapshot.value) runCheck(snapshot.value)
+}
+
+const retry = () => {
+	if (lastAttempt.value) runCheck(lastAttempt.value)
+}
+
+const onTypeChosen = () => {
+	typeError.value = ''
+	unsupportedType.value = ''
+}
 
 watch(autoRecheck, (enabled) => {
-	if (enabled) resume()
-	else pause()
+	if (enabled) scheduleRecheck()
+	else clearRecheckTimer()
 })
 
-watch([name, expected], () => {
-	if (inputError.value) inputError.value = ''
+watch(visibility, () => {
+	if (autoRecheck.value && !loading.value) scheduleRecheck()
 })
 
-onMounted(() => {
-	if (name.value.trim()) runCheck()
+// Editing the form means the result on screen is no longer what the user is after.
+watch([name, type, expected], () => {
+	const snap = snapshot.value
+	if (!autoRecheck.value || !snap) return
+	if (name.value.trim() === snap.name && type.value === snap.type && expected.value.trim() === snap.expected) return
+	autoRecheck.value = false
+	announcement.value = 'Auto re-check stopped because the form changed.'
+})
+
+// A proxied=1 link describes one record; checking any other name drops the flag.
+watch(name, (value) => {
+	if (!proxiedFor.value || normaliseName(value) === proxiedFor.value) return
+	proxiedFor.value = ''
+	if (route.query.proxied) {
+		const query = { ...route.query }
+		delete query.proxied
+		replaceQuery(query)
+	}
+})
+
+// Links from the records page reuse this page when it is already open, so the URL is
+// watched rather than read once.
+watch(
+	() => route.query,
+	(query) => {
+		const key = routeKeyFor(query)
+		if (key === routeKey) return
+		routeKey = key
+
+		cancelPending()
+		autoRecheck.value = false
+		clearRecheckTimer()
+		error.value = ''
+		inputError.value = ''
+		typeError.value = ''
+		expectedError.value = ''
+		unsupportedType.value = ''
+
+		const incomingName = queryString(query.name).trim()
+		const incomingType = queryString(query.type).trim().toUpperCase()
+		name.value = incomingName
+		expected.value = queryString(query.expected)
+		proxiedFor.value = query.proxied === '1' && incomingName ? normaliseName(incomingName) : ''
+
+		if (!incomingName) {
+			type.value = 'A'
+			clearResult()
+			announcement.value = ''
+			return
+		}
+		if (incomingType && !PROPAGATION_TYPES.includes(incomingType)) {
+			type.value = ''
+			unsupportedType.value = incomingType
+			clearResult()
+			announcement.value = `${incomingType} records can’t be checked for propagation.`
+			return
+		}
+		type.value = incomingType || 'A'
+		runCheck({
+			name: incomingName,
+			type: type.value,
+			expected: expected.value.trim(),
+			proxied: Boolean(proxiedFor.value)
+		})
+	},
+	{ immediate: true }
+)
+
+onBeforeUnmount(() => {
+	requestId++
+	clearRecheckTimer()
 })
 </script>

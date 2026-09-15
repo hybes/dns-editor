@@ -93,22 +93,28 @@ const validateLabels = (name, { allowUnderscore }) => {
 }
 
 // A hostname to send to a resolver. Underscore labels are allowed (_dmarc, _acme-challenge)
-// and an IP address is turned into its reverse-lookup name.
-export function normaliseLookupName(input) {
+// and an IP address is turned into its reverse-lookup name. With allowWildcard, a leading
+// "*." is kept and flagged so the caller can decide which concrete name to ask about.
+export function normaliseLookupName(input, { allowWildcard = false } = {}) {
 	const raw = stripInput(input)
 	if (!raw) return { error: 'Enter a domain name or IP address to look up.' }
 
 	if (isIP(raw)) {
-		return { name: reverseName(raw), reverse: true, original: raw }
+		return { name: reverseName(raw), reverse: true, wildcard: false, original: raw }
 	}
 
-	const ascii = domainToASCII(raw)
+	const wildcard = raw.startsWith('*.')
+	if (wildcard && !allowWildcard) {
+		return { error: 'Wildcard names can’t be looked up directly. Enter a name the wildcard covers instead.' }
+	}
+
+	const ascii = domainToASCII(wildcard ? raw.slice(2) : raw)
 	if (!ascii) return { error: 'That does not look like a valid domain name.' }
 
 	const problem = validateLabels(ascii, { allowUnderscore: true })
 	if (problem) return { error: problem }
 
-	return { name: ascii, reverse: false, original: raw }
+	return { name: wildcard ? `*.${ascii}` : ascii, reverse: false, wildcard, original: raw }
 }
 
 // Split a registrable name into base label(s) and its TLD (honouring co.uk style suffixes).
@@ -151,6 +157,3 @@ export function normaliseTld(input) {
 	if (!/^(?:[a-z]{2,63}|xn--[a-z0-9-]+)(?:\.[a-z]{2,63})?$/.test(ascii)) return ''
 	return ascii
 }
-
-export const isValidDomainSyntax = (name) =>
-	Boolean(name) && !validateLabels(name, { allowUnderscore: false }) && name.includes('.')

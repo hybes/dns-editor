@@ -1,36 +1,30 @@
-// Central registry of the localStorage keys the app uses, so the 'cf-*' strings
-// live in one place instead of being repeated across every page.
+// Central registry of the localStorage keys the app uses, so the strings live in one
+// place instead of being repeated across pages.
 export const STORAGE_KEYS = {
 	apiKey: 'cf-api-key',
 	zoneId: 'cf-zone-id',
-	zoneName: 'cf-zone-name',
-	dnsId: 'cf-dns-id',
-	dnsName: 'cf-dns-name',
-	accountId: 'cf-account-id',
-	accountName: 'cf-account-name',
-	zonesViewMode: 'zones-view-mode',
-	recentZones: 'cf-recent-zones',
 	dnsLookupRecent: 'cf-dns-lookup-recent',
-	domainSearchTlds: 'cf-domain-search-tlds'
+	domainSearchTlds: 'cf-domain-search-tlds',
+	recordsHiddenColumns: 'dns-records-hidden-columns'
 }
 
-// Keys cleared on logout (everything that is not a per-record preset).
-export const SESSION_KEYS = [
-	STORAGE_KEYS.apiKey,
-	STORAGE_KEYS.zoneId,
-	STORAGE_KEYS.zoneName,
-	STORAGE_KEYS.dnsId,
-	STORAGE_KEYS.dnsName,
-	STORAGE_KEYS.accountId,
-	STORAGE_KEYS.accountName,
-	STORAGE_KEYS.zonesViewMode,
-	STORAGE_KEYS.recentZones,
-	STORAGE_KEYS.dnsLookupRecent
+// Keys written by earlier versions of the app, removed on logout so nothing lingers.
+const LEGACY_KEYS = [
+	'cf-zone-name',
+	'cf-dns-id',
+	'cf-dns-name',
+	'cf-account-id',
+	'cf-account-name',
+	'zones-view-mode',
+	'cf-recent-zones'
 ]
+
+// Keys cleared on logout. Presets, hidden columns and chosen domain endings are
+// preferences, so they stay.
+export const SESSION_KEYS = [STORAGE_KEYS.apiKey, STORAGE_KEYS.zoneId, STORAGE_KEYS.dnsLookupRecent, ...LEGACY_KEYS]
 
 export const PRESET_PREFIX = 'cf-dns-preset-'
 
-export const recordsUpdatedKey = (zoneId) => `cf-records-updated-${zoneId}`
 export const presetKey = (name) => `${PRESET_PREFIX}${name}`
 
 export const readStorage = (key, fallback = '') => {
