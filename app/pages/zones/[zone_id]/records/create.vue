@@ -48,7 +48,17 @@ const FORM_ID = 'record-create-form'
 const route = useRoute()
 const router = useRouter()
 const zoneId = computed(() => String(route.params.zone_id || ''))
-const { zoneName, load: loadZone } = useZone(zoneId)
+const zoneApi = useZone(zoneId)
+const { zoneName, load: loadZone } = zoneApi
+
+// Someone who can only view a shared zone's records goes back to the list.
+watch(
+	() => zoneApi.allowed('records', 'edit'),
+	(allowed) => {
+		if (!allowed) navigateTo({ path: `/zones/${zoneId.value}/records` }, { replace: true })
+	},
+	{ immediate: true }
+)
 const { upsert } = useZoneRecords(zoneId)
 const { call } = useCfApi()
 const notify = useNotify()

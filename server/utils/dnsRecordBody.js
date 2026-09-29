@@ -2,7 +2,7 @@ import { createError } from 'h3'
 
 const PROXIABLE_TYPES = new Set(['A', 'AAAA', 'CNAME'])
 
-const invalid = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const invalid = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 const isBlank = (value) => value === undefined || value === null || String(value).trim() === ''
 

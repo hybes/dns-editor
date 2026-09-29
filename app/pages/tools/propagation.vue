@@ -644,7 +644,7 @@ const runCheck = async (params, { silent = false } = {}) => {
 		const data = await call(
 			'dns_propagation',
 			{ name: params.name, type: params.type, expected: params.expected },
-			{ auth: false, fallback: 'The propagation check failed' }
+			{ fallback: 'The propagation check failed' }
 		)
 		if (id !== requestId) return
 		const previousState = result.value?.summary.state

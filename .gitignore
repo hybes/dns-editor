@@ -132,3 +132,9 @@ dist
 
 # Browser test artifacts
 output/
+
+# DNS Manager data: SQLite database and token key
+.data
+
+# macOS
+.DS_Store

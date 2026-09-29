@@ -18,10 +18,10 @@
 			</UDashboardNavbar>
 
 			<UDashboardToolbar>
-				<div class="flex w-full items-center gap-3">
+				<div class="flex w-full flex-wrap items-center gap-x-3 gap-y-2 py-2">
 					<UFormField
 						label="Search zones"
-						class="min-w-0 flex-1 sm:max-w-80"
+						class="min-w-40 flex-1 sm:max-w-80"
 						:ui="{ labelWrapper: 'sr-only', container: 'mt-0' }"
 					>
 						<UInput
@@ -51,7 +51,18 @@
 							</template>
 						</UInput>
 					</UFormField>
-					<p v-if="loaded" class="text-muted shrink-0 text-sm tabular-nums" aria-live="polite">
+					<UFormField
+						v-if="showRenewals"
+						label="Sort zones"
+						:ui="{ labelWrapper: 'sr-only', container: 'mt-0' }"
+					>
+						<USelect v-model="sortBy" :items="SORT_ITEMS" class="w-36 sm:w-40" />
+					</UFormField>
+					<p
+						v-if="loaded"
+						class="text-muted basis-full text-sm tabular-nums sm:basis-auto"
+						aria-live="polite"
+					>
 						{{ countLabel }}
 					</p>
 				</div>
@@ -109,9 +120,16 @@
 							/>
 							<span class="text-muted text-sm">{{ planLabel(row.original) }}</span>
 							<span v-if="hasSeveralAccounts" class="text-muted text-sm wrap-anywhere">
-								{{ row.original.account?.name }}
+								{{ accountLabel(row.original) }}
 							</span>
 						</div>
+						<p
+							v-if="registrationFor(row.original.name)"
+							class="text-muted mt-1 text-sm md:hidden"
+							:class="{ 'text-warning': expiresSoon(registrationFor(row.original.name)) }"
+						>
+							{{ renewalLabel(registrationFor(row.original.name)) }}
+						</p>
 					</div>
 				</template>
 
@@ -126,8 +144,68 @@
 				</template>
 
 				<template #account-cell="{ row }">
-					<span class="block max-w-64 truncate" :title="row.original.account?.name">
-						{{ row.original.account?.name || '—' }}
+					<span class="block max-w-64 truncate" :title="accountLabel(row.original)">
+						{{ accountLabel(row.original) }}
+					</span>
+					<span
+						v-if="hasSeveralConnections && row.original.connection?.label !== row.original.account?.name"
+						class="text-muted block max-w-64 truncate text-xs"
+					>
+						via {{ row.original.connection?.label }}
+					</span>
+				</template>
+
+				<template #renews-cell="{ row }">
+					<template v-if="registrationFor(row.original.name)">
+						<time
+							v-if="formatDate(registrationFor(row.original.name).expires_at)"
+							:datetime="registrationFor(row.original.name).expires_at"
+							:class="{ 'text-warning': expiresSoon(registrationFor(row.original.name)) }"
+						>
+							{{ formatDate(registrationFor(row.original.name).expires_at) }}
+						</time>
+						<span v-else class="text-dimmed">Not yet known</span>
+					</template>
+					<span v-else class="text-dimmed" :title="NOT_REGISTERED">—</span>
+				</template>
+
+				<template #autoRenew-cell="{ row }">
+					<!-- Above the row's stretched link, so the switch gets the click. -->
+					<div
+						v-if="
+							registrationFor(row.original.name) && registrationFor(row.original.name).editable !== false
+						"
+						class="relative z-10 flex"
+					>
+						<USwitch
+							:model-value="registrationFor(row.original.name).auto_renew === true"
+							:loading="autoRenew.pending.has(registrationFor(row.original.name).domain_name)"
+							:disabled="autoRenew.pending.has(registrationFor(row.original.name).domain_name)"
+							:aria-label="`Auto-renew ${row.original.name}`"
+							@update:model-value="
+								(value) =>
+									autoRenew.ask(
+										registrationFor(row.original.name),
+										value,
+										registrationFor(row.original.name).account
+									)
+							"
+						/>
+					</div>
+					<!-- A shared domain with view-only renewal access shows the setting without changing it. -->
+					<span v-else-if="registrationFor(row.original.name)" class="text-muted">
+						{{ registrationFor(row.original.name).auto_renew ? 'On' : 'Off' }}
+					</span>
+				</template>
+
+				<template #renewal-cell="{ row }">
+					<span
+						v-if="priceFor(row.original.name)"
+						class="tabular-nums"
+						:title="priceFor(row.original.name).standard ? standardTitle(row.original.name) : undefined"
+					>
+						{{ formatMoney(priceFor(row.original.name).amount, priceFor(row.original.name).currency) }}
+						<span class="text-muted">a year</span>
 					</span>
 				</template>
 
@@ -151,6 +229,36 @@
 					<UEmpty variant="naked" v-bind="emptyState" />
 				</template>
 			</UTable>
+
+			<div
+				v-if="(showRenewals || registrations.denied.value) && filteredZones.length"
+				class="text-muted mt-3 flex flex-col gap-1 text-xs text-pretty"
+			>
+				<p v-if="registrations.denied.value">
+					Renewal dates come from Cloudflare Registrar, which your connections can’t read.
+					<ULink to="/connections" class="text-highlighted underline"
+						>Add a connection DNS Manager makes itself</ULink
+					>, with every permission it uses.
+				</p>
+				<p v-else-if="registrations.loading.value && !anyPrice">Loading renewal prices from Cloudflare…</p>
+				<p v-if="anyStandardPrice">
+					Renewal prices are Cloudflare’s current ones. Where Cloudflare doesn’t quote a domain itself, it’s
+					the price of a standard name on the same ending; premium names can cost more.
+				</p>
+			</div>
+
+			<RegistrarConfirmModal
+				v-model:open="autoRenew.open.value"
+				:title="autoRenew.copy.value.title"
+				:description="autoRenew.copy.value.description"
+				:confirm-label="autoRenew.copy.value.confirm"
+				:confirm-icon="autoRenew.target.value?.enable ? 'i-lucide-repeat' : 'i-lucide-circle-off'"
+				:confirm-color="autoRenew.target.value?.enable ? 'primary' : 'warning'"
+				error-title="Cloudflare didn’t change auto-renew"
+				:action="autoRenew.apply"
+			>
+				<p v-if="autoRenew.copy.value.detail" class="text-muted">{{ autoRenew.copy.value.detail }}</p>
+			</RegistrarConfirmModal>
 		</template>
 	</UDashboardPanel>
 </template>
@@ -164,6 +272,13 @@ useSeoMeta({ title: 'Zones' })
 // Tailwind only generates classes it finds written out in full, so these stay literal.
 const FROM_SM = { class: { th: 'hidden sm:table-cell', td: 'hidden sm:table-cell' } }
 const FROM_MD = { class: { th: 'hidden md:table-cell', td: 'hidden md:table-cell' } }
+const FROM_LG = { class: { th: 'hidden lg:table-cell', td: 'hidden lg:table-cell' } }
+
+const SORT_ITEMS = [
+	{ label: 'Name', value: 'name' },
+	{ label: 'Renewal date', value: 'renews' }
+]
+const NOT_REGISTERED = 'Not registered with Cloudflare Registrar'
 const TABLE_META = { class: { tr: 'relative hover:bg-elevated/50 has-[a:focus-visible]:bg-elevated/50' } }
 
 const route = useRoute()
@@ -174,7 +289,52 @@ onMounted(() => {
 	load()
 })
 
-const reload = () => load({ force: true })
+// --- Renewals ------------------------------------------------------------------------------------
+// Expiry, auto-renew and renewal price for zones registered with Cloudflare Registrar, from the
+// accounts that own the zones.
+
+const registrations = useRegistrations()
+const { registrationFor, priceFor } = registrations
+// Once zones are listed, so the renewals match the zones on the page.
+watch(
+	() => zones.value.length,
+	(count) => {
+		if (count) registrations.load()
+	},
+	{ immediate: true }
+)
+
+const registeredCount = computed(() => zones.value.filter((zone) => registrationFor(zone.name)).length)
+const showRenewals = computed(() => registeredCount.value > 0)
+const anyPrice = computed(() => filteredZones.value.some((zone) => priceFor(zone.name)))
+const anyStandardPrice = computed(() => filteredZones.value.some((zone) => priceFor(zone.name)?.standard))
+
+const renewalLabel = (registration) => {
+	const date = formatDate(registration.expires_at)
+	if (!date) return 'Renewal date not yet known'
+	return registration.auto_renew ? `Renews ${date}` : `Expires ${date}, auto-renew off`
+}
+
+const standardTitle = (domain) =>
+	`Cloudflare’s current renewal price for a standard .${domain.split('.').slice(1).join('.')} name`
+
+const autoRenew = useAutoRenew({
+	priceNote: (domain) => {
+		const price = priceFor(domain)
+		if (!price) return ''
+		const amount = formatMoney(price.amount, price.currency)
+		return price.standard
+			? `Cloudflare renews a standard name on this ending for ${amount} a year today. Renewal prices follow the registry and can change.`
+			: `Cloudflare quotes ${amount} a year to renew it. Renewal prices follow the registry and can change.`
+	},
+	onChanged: (updated) => registrations.update(updated),
+	pendingHint: 'The Registrar page shows the progress.'
+})
+
+const reload = () => {
+	load({ force: true })
+	registrations.load({ force: true })
+}
 
 const recordsPath = (zone) => `/zones/${zone.id}/records`
 
@@ -186,13 +346,29 @@ const statusBadges = (zone) => {
 
 const planLabel = (zone) => [zone.plan?.name, SETUP_LABELS[zone.type]?.short].filter(Boolean).join(' · ') || '—'
 
-const hasSeveralAccounts = computed(() => new Set(zones.value.map((zone) => zone.account?.id).filter(Boolean)).size > 1)
+const auth = useAuth()
+const hasSeveralConnections = computed(() => auth.connections.value.length > 1)
+const hasSeveralAccounts = computed(
+	() =>
+		hasSeveralConnections.value ||
+		zones.value.some((zone) => zone.shared) ||
+		new Set(zones.value.map((zone) => zone.account?.id).filter(Boolean)).size > 1
+)
+// A shared zone's account is its owner's, so it says who shares it instead.
+const accountLabel = (zone) => (zone.shared ? `Shared by ${zone.shared.owner}` : zone.account?.name || '—')
 
 const columns = computed(() => [
 	{ id: 'name', accessorKey: 'name', header: 'Domain', meta: { class: { td: 'whitespace-normal' } } },
 	{ id: 'status', accessorKey: 'status', header: 'Status', meta: FROM_SM },
 	{ id: 'plan', header: 'Plan', meta: FROM_SM },
 	...(hasSeveralAccounts.value ? [{ id: 'account', header: 'Account', meta: FROM_MD }] : []),
+	...(showRenewals.value
+		? [
+				{ id: 'renews', header: 'Renews', meta: FROM_MD },
+				{ id: 'autoRenew', header: 'Auto-renew', meta: FROM_SM },
+				{ id: 'renewal', header: 'Renewal price', meta: FROM_LG }
+			]
+		: []),
 	{ id: 'open', header: '', meta: { class: { th: 'w-px', td: 'w-px ps-0' } } }
 ])
 
@@ -252,13 +428,28 @@ defineShortcuts({
 
 const term = computed(() => search.value.trim().toLowerCase())
 
+const sortBy = ref('name')
+
+// Soonest renewal first; zones not registered with Cloudflare Registrar after, by name.
+const byRenewal = (a, b) => {
+	const time = (zone) => Date.parse(registrationFor(zone.name)?.expires_at || '') || Infinity
+	return time(a) - time(b) || a.name.localeCompare(b.name)
+}
+
 const filteredZones = computed(() => {
-	if (!term.value) return zones.value
-	return zones.value.filter((zone) =>
-		[zone.name, zone.status, zone.plan?.name, zone.account?.name].some((field) =>
-			field?.toLowerCase().includes(term.value)
-		)
-	)
+	const matching = term.value
+		? zones.value.filter((zone) =>
+				[
+					zone.name,
+					zone.status,
+					zone.plan?.name,
+					zone.account?.name,
+					zone.connection?.label,
+					zone.shared?.owner
+				].some((field) => field?.toLowerCase().includes(term.value))
+			)
+		: zones.value
+	return sortBy.value === 'renews' && showRenewals.value ? [...matching].sort(byRenewal) : matching
 })
 
 const openOnlyMatch = () => {
@@ -267,9 +458,12 @@ const openOnlyMatch = () => {
 
 const zoneCount = (count) => `${count} ${count === 1 ? 'zone' : 'zones'}`
 
-const countLabel = computed(() =>
-	term.value ? `${filteredZones.value.length} of ${zoneCount(zones.value.length)}` : zoneCount(zones.value.length)
-)
+const countLabel = computed(() => {
+	const count = term.value
+		? `${filteredZones.value.length} of ${zoneCount(zones.value.length)}`
+		: zoneCount(zones.value.length)
+	return showRenewals.value ? `${count} · ${registeredCount.value} on Cloudflare Registrar` : count
+})
 
 const emptyState = computed(() => {
 	if (term.value && zones.value.length) {
@@ -290,15 +484,16 @@ const emptyState = computed(() => {
 	}
 	return {
 		icon: 'i-lucide-globe',
-		title: 'This token can’t see any zones',
-		description: 'Give it Zone: Read access to the zones you manage, or add a site to your Cloudflare account.',
+		title: 'Your connections can’t see any zones',
+		description:
+			'Give a connection’s token Zone: Read access to the zones you manage, add another connection, or add a site to your Cloudflare account.',
 		actions: [
 			{
-				label: 'Replace token',
+				label: 'Open connections',
 				icon: 'i-lucide-key-round',
 				color: 'neutral',
 				variant: 'outline',
-				to: '/login?replace=1'
+				to: '/connections'
 			},
 			{
 				label: 'Manage API tokens',

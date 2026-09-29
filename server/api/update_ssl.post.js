@@ -1,6 +1,7 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 const SSL_MODES = new Set(['off', 'flexible', 'full', 'strict'])
@@ -10,26 +11,27 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 
 		if (!SSL_MODES.has(body.ssl)) {
-			throw createError({ statusCode: 400, statusMessage: 'SSL mode must be off, flexible, full or strict' })
+			throw createError({ statusCode: 400, message: 'SSL mode must be off, flexible, full or strict' })
 		}
 
-		const result = await cfFetch({
+		const setting = { zone: zoneId, args: { 'setting-id': 'ssl' } }
+		const result = await cfCommand({
 			apiKey: body.apiKey,
-			method: 'PATCH',
-			path: `/zones/${zoneId}/settings/ssl`,
+			command: 'zones settings edit',
+			...setting,
 			body: { value: body.ssl }
 		})
 
 		// Clear only the SSL setting: the zone details read it from this path, and clearing
 		// the whole zone prefix would also throw away cached records.
 		if (result?.success) {
-			invalidateCfCache({ apiKey: body.apiKey, paths: [`/zones/${zoneId}/settings/ssl`] })
+			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones settings get', setting)] })
 		}
 
 		return result
@@ -37,7 +39,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

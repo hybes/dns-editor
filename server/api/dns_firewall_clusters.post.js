@@ -1,9 +1,10 @@
 import { isIP } from 'node:net'
 import { createError } from 'h3'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import {
 	accountFields,
-	accountListQuery,
+	accountListFlags,
 	readAccountBody,
 	readAccountPayload,
 	resolveAccountId
@@ -19,7 +20,7 @@ const TTL_RANGE = { min: 30, max: 36_000 }
 const RATELIMIT_RANGE = { min: 100, max: 1_000_000_000 }
 const RETRIES_RANGE = { min: 0, max: 2 }
 
-const badRequest = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 const readUpstreamIps = (value) => {
 	const ips = accountFields.list(value, 'Upstream IPs')
@@ -79,36 +80,43 @@ export default defineEventHandler(async (event) => {
 		const request = await readAccountBody(event)
 		const action = request.body.action || 'list'
 		if (action !== 'list' && action !== 'create') {
-			throw createError({ statusCode: 400, statusMessage: 'Action must be list or create' })
+			throw createError({ statusCode: 400, message: 'Action must be list or create' })
 		}
 
 		// Check the input before looking up the account, so bad input fails fast.
 		const cluster = action === 'create' ? readCluster(request.body) : null
-		const query = action === 'list' ? accountListQuery(request.body, { minPerPage: 1, maxPerPage: 100 }) : ''
+		const flags = action === 'list' ? accountListFlags(request.body, { minPerPage: 1, maxPerPage: 100 }) : {}
 
 		const { accountId, failure } = await resolveAccountId(request)
 		if (failure) return failure
 
-		const path = `/accounts/${accountId}/dns_firewall`
-
 		if (action === 'list') {
-			return await cfFetch({
+			return await cfCommand({
 				apiKey: request.apiKey,
-				method: 'GET',
-				path: `${path}${query}`,
+				command: 'dns-firewall list',
+				account: accountId,
+				flags,
 				cacheTtl: LIST_CACHE_TTL_MS,
 				fresh: request.body.fresh === true
 			})
 		}
 
-		const created = await cfFetch({ apiKey: request.apiKey, method: 'POST', path, body: cluster })
-		if (created?.success) invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		const created = await cfCommand({
+			apiKey: request.apiKey,
+			command: 'dns-firewall create',
+			account: accountId,
+			body: cluster
+		})
+		if (created?.success) {
+			const path = await cfCommandPath('dns-firewall list', { account: accountId })
+			invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		}
 		return created
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

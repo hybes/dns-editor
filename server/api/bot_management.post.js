@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 // Passes Cloudflare's envelope through unchanged. fight_mode only exists on the free
@@ -10,15 +10,15 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 
-		return await cfFetch({
+		return await cfCommand({
 			apiKey: body.apiKey,
-			method: 'GET',
-			path: `/zones/${zoneId}/bot_management`,
+			command: 'bot-management get',
+			zone: zoneId,
 			cacheTtl: 15000,
 			fresh: body.fresh === true
 		})
@@ -26,7 +26,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

@@ -46,12 +46,13 @@
 		</template>
 
 		<template #body>
+			<ZoneAccessNote :access="zoneAccess" area="rules" subject="rules" />
 			<AccountFeatureGate
 				:loaded="accessState !== 'loading'"
 				:available="accessState === 'available'"
 				feature="rules"
 				:reason="accessReason"
-				hint="Use a token that can read and edit this zone’s rules."
+				:hint="RULES_HINT"
 				:checking="checkingAccess"
 				@retry="retryAccess"
 			>
@@ -93,7 +94,7 @@
 						:title="`No entry point ruleset for ${phaseLabel}`"
 						:description="`Each phase keeps a zone’s rules in an entry point ruleset, and ${zoneName || 'this zone'} doesn’t have one for ${phaseLabel} yet. Create it to start adding rules.`"
 						:actions="
-							entrypointCreatable
+							entrypointCreatable && canEdit
 								? [
 										{
 											label: 'Create entry point ruleset',
@@ -165,7 +166,7 @@
 							<USwitch
 								:model-value="row.original.enabled !== false"
 								:loading="Boolean(toggling[row.original.id])"
-								:disabled="Boolean(toggling[row.original.id])"
+								:disabled="Boolean(toggling[row.original.id]) || !canEdit"
 								:aria-label="`Enabled: ${ruleLabel(row.original)}`"
 								size="sm"
 								@update:model-value="(value) => setEnabled(row.original, value)"
@@ -314,7 +315,7 @@
 							label="Bypass token"
 							name="token"
 							required
-							:error="tokenError"
+							:error="tokenError || undefined"
 							help="8–256 letters, numbers, hyphens or underscores. Anyone with this token skips the checks below, so keep it secret."
 						>
 							<div class="flex gap-2">
@@ -460,6 +461,12 @@
 </template>
 
 <script setup>
+import { APP_PERMISSIONS } from '#shared/utils/cloudflare'
+
+// Each kind of rule has its own permission, so the token needs the ones for the rules you edit.
+const RULES_HINT = `The token needs ${new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(
+	APP_PERMISSIONS.filter((item) => item.use.startsWith('Rules')).map((item) => `${item.name} ${item.access}`)
+)} for this zone, for the kinds of rule you use.`
 // Zone phases offered in the phase list, most-used security phases first.
 const PHASES = [
 	{ value: 'http_request_firewall_custom', label: 'Custom rules (WAF)' },
@@ -541,15 +548,12 @@ const TOKEN_MASK = '••••••••'
 const route = useRoute()
 const { call } = useCfApi()
 const notify = useNotify()
-const {
-	zoneId,
-	zoneName,
-	capabilities,
-	capabilitiesLoaded,
-	missingCapabilities,
-	can,
-	load: loadZone
-} = useZone(() => route.params.zone_id)
+const zoneApi = useZone(() => route.params.zone_id)
+const { zoneId, zoneName, capabilities, capabilitiesLoaded, missingCapabilities, can, load: loadZone } = zoneApi
+const zoneAccess = zoneApi.access
+// On a zone shared with this account, what its rules level allows (own zones allow everything).
+const canEdit = computed(() => zoneApi.allowed('rules', 'edit'))
+const canDelete = computed(() => zoneApi.allowed('rules', 'delete'))
 
 useSeoMeta({ title: computed(() => (zoneName.value ? `Rules · ${zoneName.value}` : 'Rules')) })
 
@@ -837,7 +841,9 @@ const rowMenu = (rule) => [
 			onSelect: () => notify.copy(rule.expression, 'Expression')
 		}
 	],
-	[{ label: 'Delete rule', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => askDelete(rule) }]
+	...(canDelete.value
+		? [[{ label: 'Delete rule', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => askDelete(rule) }]]
+		: [])
 ]
 
 // Delete -----------------------------------------------------------------------------------
@@ -896,7 +902,7 @@ const form = reactive({
 const skipOptions = computed(() => SKIP_OPTIONS[selectedPhase.value] || null)
 const bypassSupported = computed(() => Boolean(skipOptions.value))
 const canAddBypass = computed(
-	() => accessState.value === 'available' && bypassSupported.value && !!selectedRuleset.value
+	() => canEdit.value && accessState.value === 'available' && bypassSupported.value && !!selectedRuleset.value
 )
 const skipRulesetDescription = computed(() => skipOptions.value?.rulesetDescription || '')
 const skipPhaseItems = computed(() => skipOptions.value?.phases || [])

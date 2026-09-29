@@ -2,12 +2,13 @@ import { createError } from 'h3'
 import { readJsonBody } from '../../utils/readJsonBody'
 import { buildCloudflareDnsPayload } from '../../utils/dnsEditor'
 import { isCloudflareId, readId } from '../../utils/ids'
-import { cfFetch, invalidateCfCache } from '../../utils/cfFetch'
+import { invalidateCfCache } from '../../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../../utils/cfCommand'
 
 const MAX_CHANGES = 100
 
-// An in-place update only changes the value, the MX priority and an explicit TTL. PATCH
-// leaves the record's proxy status, comment, tags and settings as they are, where a PUT
+// An in-place update only changes the value, the MX priority and an explicit TTL. cf's
+// `edit` (a PATCH) leaves the record's proxy status, comment, tags and settings as they are, where a PUT
 // would overwrite them. The planner uses TTL 1 (automatic) when the paste gave none.
 const updateBody = (payload) => {
 	const patch = { content: payload.content }
@@ -21,25 +22,20 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 
 		if (!Array.isArray(body.changes) || !body.changes.length) {
-			throw createError({ statusCode: 400, statusMessage: 'Choose at least one change to apply' })
+			throw createError({ statusCode: 400, message: 'Choose at least one change to apply' })
 		}
 
 		if (body.changes.length > MAX_CHANGES) {
-			throw createError({ statusCode: 400, statusMessage: `Apply up to ${MAX_CHANGES} changes at a time` })
+			throw createError({ statusCode: 400, message: `Apply up to ${MAX_CHANGES} changes at a time` })
 		}
 
-		const zoneData = await cfFetch({
-			apiKey: body.apiKey,
-			method: 'GET',
-			path: `/zones/${zoneId}`,
-			cacheTtl: 15000
-		})
+		const zoneData = await cfCommand({ apiKey: body.apiKey, command: 'zones get', zone: zoneId, cacheTtl: 15000 })
 
 		if (!zoneData?.success || !zoneData?.result?.name) {
 			return {
@@ -86,12 +82,11 @@ export default defineEventHandler(async (event) => {
 			// reported and the cache below is still cleared.
 			let response
 			try {
-				response = await cfFetch({
+				response = await cfCommand({
 					apiKey: body.apiKey,
-					method: isUpdate ? 'PATCH' : 'POST',
-					path: isUpdate
-						? `/zones/${zoneId}/dns_records/${change.existingRecordId}`
-						: `/zones/${zoneId}/dns_records`,
+					command: isUpdate ? 'dns records edit' : 'dns records create',
+					zone: zoneId,
+					args: isUpdate ? { 'dns-record-id': change.existingRecordId } : undefined,
 					body: isUpdate ? updateBody(payload) : payload
 				})
 			} catch (error) {
@@ -127,7 +122,7 @@ export default defineEventHandler(async (event) => {
 		const failures = results.filter((item) => !item.success)
 
 		if (created + updated > 0) {
-			invalidateCfCache({ apiKey: body.apiKey, paths: [`/zones/${zoneId}`] })
+			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 		}
 
 		// success:false whenever any change failed, so a partial apply can't pass for a full one.
@@ -148,7 +143,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Couldn’t apply the changes: ${error?.message || 'unknown error'}`
+			message: `Couldn’t apply the changes: ${error?.message || 'unknown error'}`
 		})
 	}
 })

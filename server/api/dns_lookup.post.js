@@ -56,12 +56,12 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		const parsed = normaliseLookupName(body.name)
-		if (parsed.error) throw createError({ statusCode: 400, statusMessage: parsed.error })
+		if (parsed.error) throw createError({ statusCode: 400, message: parsed.error })
 
 		let type = typeof body.type === 'string' ? body.type.trim().toUpperCase() : 'A'
 		if (parsed.reverse && type !== 'PTR') type = 'PTR'
 		if (type !== 'ALL' && !LOOKUP_RECORD_TYPES.includes(type)) {
-			throw createError({ statusCode: 400, statusMessage: `Unsupported record type: ${type}` })
+			throw createError({ statusCode: 400, message: `Unsupported record type: ${type}` })
 		}
 
 		const types = type === 'ALL' ? COMMON_RECORD_TYPES : [type]
@@ -102,7 +102,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `DNS lookup failed: ${error?.message || 'Unknown error'}`
+			message: `DNS lookup failed: ${error?.message || 'Unknown error'}`
 		})
 	}
 })

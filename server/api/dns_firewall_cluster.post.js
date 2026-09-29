@@ -1,6 +1,7 @@
 import { isIP } from 'node:net'
 import { createError } from 'h3'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { accountFields, readAccountBody, readAccountPayload, resolveAccountId } from '../utils/accountId'
 
 const ACTIONS = ['get', 'update', 'delete']
@@ -11,7 +12,7 @@ const TTL_RANGE = { min: 30, max: 36_000 }
 const RATELIMIT_RANGE = { min: 100, max: 1_000_000_000 }
 const RETRIES_RANGE = { min: 0, max: 2 }
 
-const badRequest = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 const readUpstreamIps = (value) => {
 	const ips = accountFields.list(value, 'Upstream IPs')
@@ -38,7 +39,7 @@ const readAttackMitigation = (value) => {
 	}
 }
 
-// Cloudflare's update is a PATCH, so only the fields being changed are sent and checked.
+// cf's `edit` is a PATCH, so only the fields being changed are sent and checked.
 const readChanges = (body) => {
 	const cluster = readAccountPayload(body, 'cluster', 'Cluster')
 	if (!Object.keys(cluster).length) throw badRequest('There are no changes to save')
@@ -77,7 +78,7 @@ export default defineEventHandler(async (event) => {
 		const request = await readAccountBody(event, { idKey: 'clusterId', idLabel: 'Cluster ID' })
 		const action = request.body.action || 'get'
 		if (!ACTIONS.includes(action)) {
-			throw createError({ statusCode: 400, statusMessage: 'Action must be get, update or delete' })
+			throw createError({ statusCode: 400, message: 'Action must be get, update or delete' })
 		}
 
 		const changes = action === 'update' ? readChanges(request.body) : null
@@ -85,27 +86,28 @@ export default defineEventHandler(async (event) => {
 		const { accountId, failure } = await resolveAccountId(request)
 		if (failure) return failure
 
-		const listPath = `/accounts/${accountId}/dns_firewall`
-		const path = `${listPath}/${request.id}`
+		const target = { apiKey: request.apiKey, account: accountId, args: { 'dns-firewall-id': request.id } }
 
 		if (action === 'get') {
-			return await cfFetch({ apiKey: request.apiKey, method: 'GET', path })
+			return await cfCommand({ ...target, command: 'dns-firewall get' })
 		}
 
-		const data = await cfFetch({
-			apiKey: request.apiKey,
-			method: action === 'update' ? 'PATCH' : 'DELETE',
-			path,
+		const data = await cfCommand({
+			...target,
+			command: action === 'update' ? 'dns-firewall edit' : 'dns-firewall delete',
 			body: changes || undefined
 		})
 		// The prefix also clears the paginated list the page reads.
-		if (data?.success) invalidateCfCache({ apiKey: request.apiKey, paths: [listPath] })
+		if (data?.success) {
+			const listPath = await cfCommandPath('dns-firewall list', { account: accountId })
+			invalidateCfCache({ apiKey: request.apiKey, paths: [listPath] })
+		}
 		return data
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

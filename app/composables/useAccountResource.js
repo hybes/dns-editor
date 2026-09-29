@@ -4,9 +4,10 @@ const pending = new Map()
 let sequence = 0
 
 // List, create, update and delete for one kind of account-wide Cloudflare resource (Turnstile
-// widgets, DNS views, DNS Firewall clusters) through a pair of /api routes: `list` answers
-// list and create, `item` answers update and delete. The routes find the account from the
-// zone in the URL, so state is kept per zone and shared by every component on the page.
+// widgets, DNS views, DNS Firewall clusters, zone transfer peers) either through a pair of
+// /api routes (`list` answers list and create, `item` update and delete) or through cf
+// commands (`commands`). Both find the account from the zone in the URL, so state is kept
+// per zone and shared by every component on the page.
 //
 // load() never throws; failures land in `error`. create/update/remove throw (CfApiError or
 // FetchError) so the form or modal that started them can show Cloudflare's message, and on
@@ -21,6 +22,10 @@ let sequence = 0
 //   list        endpoint for list and create, e.g. 'turnstile_widgets'
 //   item        endpoint for update and delete, e.g. 'turnstile_widget'
 //   payloadKey  body field that carries create/update data, e.g. 'widget'
+//   commands    instead of list/item/payloadKey: the cf commands for each operation, e.g.
+//               { list: 'dns zone-transfers peers list', create: '… create',
+//                 update: '… update', delete: '… delete' }; the payload is sent as the body
+//   idArg       with commands: the argument naming the item, e.g. 'peer-id'
 //   idKey       field that identifies an item in Cloudflare's results (default 'id')
 //   idParam     body field the item endpoint expects the ID in (defaults to idKey)
 //   label       singular noun for fallback messages, e.g. 'Turnstile widget'
@@ -28,22 +33,74 @@ let sequence = 0
 //   normalise   optional; maps each item before it is stored, e.g. to drop a secret
 export function useAccountResource(
 	zoneIdSource,
-	{ list, item, payloadKey, idKey = 'id', idParam = idKey, label = 'item', perPage, normalise = (value) => value }
+	{
+		list,
+		item,
+		payloadKey,
+		commands,
+		idArg,
+		idKey = 'id',
+		idParam = idKey,
+		label = 'item',
+		perPage,
+		normalise = (value) => value
+	}
 ) {
 	const zoneId = computed(() => String(toValue(zoneIdSource) || ''))
-	const cache = useState(`cf-account-${list}`, () => ({}))
+	const name = commands?.list || list
+	const cache = useState(`cf-account-${name}`, () => ({}))
 	const { call } = useCfApi()
-	const { getApiKey } = useSession()
+	const { exec } = useCfCommands()
+	const { getSessionKey } = useSession()
+	const { isFresh } = useDataChanges()
 
 	const entry = computed(() => cache.value?.[zoneId.value] || null)
-	const pendingKey = (id) => `${list}:${id}`
+	const pendingKey = (id) => `${name}:${id}`
+
+	// How each operation reaches Cloudflare. `id` is the zone whose account owns the items.
+	const send = commands
+		? {
+				list: (id, _fresh, fallback) =>
+					exec(
+						commands.list,
+						{ accountOfZone: id, flags: perPage ? { page: 1, 'per-page': perPage } : undefined },
+						{ fallback }
+					),
+				create: (id, payload, fallback) =>
+					exec(commands.create, { accountOfZone: id, body: payload }, { fallback }),
+				update: (id, itemId, payload, fallback) =>
+					exec(
+						commands.update,
+						{ accountOfZone: id, args: { [idArg]: itemId }, body: payload },
+						{ fallback }
+					),
+				remove: (id, itemId, fallback) =>
+					exec(commands.delete, { accountOfZone: id, args: { [idArg]: itemId } }, { fallback })
+			}
+		: {
+				list: (id, fresh, fallback) => {
+					const body = { currZone: id, fresh }
+					if (perPage) Object.assign(body, { page: 1, per_page: perPage })
+					return call(list, body, { fallback })
+				},
+				create: (id, payload, fallback) =>
+					call(list, { currZone: id, action: 'create', [payloadKey]: payload }, { fallback }),
+				update: (id, itemId, payload, fallback) =>
+					call(
+						item,
+						{ currZone: id, action: 'update', [idParam]: itemId, [payloadKey]: payload },
+						{ fallback }
+					),
+				remove: (id, itemId, fallback) =>
+					call(item, { currZone: id, action: 'delete', [idParam]: itemId }, { fallback })
+			}
 
 	const loadZone = async (id, { force = false } = {}) => {
-		const key = getApiKey()
+		const key = getSessionKey()
 		if (!id || !key) return []
 
 		const current = cache.value[id]
-		if (!force && current?.fetchedAt && Date.now() - current.fetchedAt < TTL_MS) return current.items
+		if (!force && isFresh(current?.fetchedAt, TTL_MS)) return current.items
 		const inFlight = pending.get(pendingKey(id))
 		if (inFlight && inFlight.key === key) return inFlight.request
 
@@ -58,13 +115,12 @@ export function useAccountResource(
 			error: ''
 		}
 
-		const body = { currZone: id, fresh: force }
-		if (perPage) Object.assign(body, { page: 1, per_page: perPage })
 		const fallback = `Couldn’t load ${label}s`
-		const isCurrent = () => getApiKey() === key && Boolean(cache.value?.[id])
+		const isCurrent = () => getSessionKey() === key && Boolean(cache.value?.[id])
 		let stale = false
 
-		const request = call(list, body, { fallback })
+		const request = send
+			.list(id, force, fallback)
 			.then((response) => {
 				if (!isCurrent()) return
 				// A create, update or delete finished while this was in flight. Leave the
@@ -135,13 +191,9 @@ export function useAccountResource(
 	// only returned once, such as a Turnstile secret.
 	const create = async (payload) => {
 		const id = zoneId.value
-		const key = getApiKey()
-		const response = await call(
-			list,
-			{ currZone: id, action: 'create', [payloadKey]: payload },
-			{ fallback: `Couldn’t create the ${label}` }
-		)
-		if (response?.result && getApiKey() === key) {
+		const key = getSessionKey()
+		const response = await send.create(id, payload, `Couldn’t create the ${label}`)
+		if (response?.result && getSessionKey() === key) {
 			store(id, normalise(response.result))
 			markOtherZonesStale(id)
 		}
@@ -150,13 +202,9 @@ export function useAccountResource(
 
 	const update = async (itemId, payload) => {
 		const id = zoneId.value
-		const key = getApiKey()
-		const response = await call(
-			item,
-			{ currZone: id, action: 'update', [idParam]: itemId, [payloadKey]: payload },
-			{ fallback: `Couldn’t save the ${label}` }
-		)
-		if (response?.result && getApiKey() === key) {
+		const key = getSessionKey()
+		const response = await send.update(id, itemId, payload, `Couldn’t save the ${label}`)
+		if (response?.result && getSessionKey() === key) {
 			store(id, normalise(response.result))
 			markOtherZonesStale(id)
 		}
@@ -165,13 +213,9 @@ export function useAccountResource(
 
 	const remove = async (itemId) => {
 		const id = zoneId.value
-		const key = getApiKey()
-		await call(
-			item,
-			{ currZone: id, action: 'delete', [idParam]: itemId },
-			{ fallback: `Couldn’t delete the ${label}` }
-		)
-		if (getApiKey() !== key) return
+		const key = getSessionKey()
+		await send.remove(id, itemId, `Couldn’t delete the ${label}`)
+		if (getSessionKey() !== key) return
 		markOtherZonesStale(id)
 		const current = cache.value[id]
 		if (!current) return

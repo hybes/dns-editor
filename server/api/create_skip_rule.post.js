@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 // The token is interpolated into a Cloudflare rule expression, so constrain it to a safe
@@ -20,7 +20,7 @@ const SKIP_OPTIONS = {
 
 const text = (value) => (typeof value === 'string' ? value.trim() : '')
 
-const badRequest = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 const readChoices = (value, allowed, noun) => {
 	if (value === undefined || value === null) return []
@@ -96,17 +96,18 @@ export default defineEventHandler(async (event) => {
 		if (typeof body.enabled === 'boolean') payload.enabled = body.enabled
 		if (typeof body.loggingEnabled === 'boolean') payload.logging = { enabled: body.loggingEnabled }
 
-		return await cfFetch({
+		return await cfCommand({
 			apiKey: body.apiKey,
-			method: 'POST',
-			path: `/zones/${zoneId}/rulesets/${rulesetId}/rules`,
+			command: 'rulesets account-rulesets rules create',
+			zone: zoneId,
+			args: { 'ruleset-id': rulesetId },
 			body: payload
 		})
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

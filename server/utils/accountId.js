@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import { cfFetch } from './cfFetch'
+import { cfCommand } from './cfCommand'
 import { readId } from './ids'
 import { readJsonBody } from './readJsonBody'
 
@@ -10,7 +10,7 @@ import { readJsonBody } from './readJsonBody'
 // failures, so a retry still goes back to Cloudflare.
 const ZONE_LOOKUP_TTL_MS = 60_000
 
-const badRequest = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 // Reads the body and checks the fields every account route needs; pass idKey/idLabel for
 // routes that act on one item. Throws a 400 for missing or malformed input.
@@ -28,7 +28,7 @@ export async function readAccountBody(event, { idKey, idLabel } = {}) {
 // Returns { accountId, failure }. `failure` is a Cloudflare error envelope for the route to
 // return unchanged, so the page shows Cloudflare's own message.
 export async function resolveAccountId({ apiKey, zoneId }) {
-	const zone = await cfFetch({ apiKey, method: 'GET', path: `/zones/${zoneId}`, cacheTtl: ZONE_LOOKUP_TTL_MS })
+	const zone = await cfCommand({ apiKey, command: 'zones get', zone: zoneId, cacheTtl: ZONE_LOOKUP_TTL_MS })
 	if (!zone?.success) return { accountId: '', failure: zone }
 	const accountId = zone.result?.account?.id || ''
 	if (!accountId) {
@@ -40,11 +40,11 @@ export async function resolveAccountId({ apiKey, zoneId }) {
 	return { accountId, failure: null }
 }
 
-// Turns optional `page` and `per_page` body fields into a query string, within the limits
-// Cloudflare sets for that list. Returns '' when neither is sent.
-export function accountListQuery(body, { minPerPage = 1, maxPerPage = 100 } = {}) {
+// Turns optional `page` and `per_page` body fields into cf's --page and --per-page flags,
+// within the limits Cloudflare sets for that list. Returns {} when neither is sent.
+export function accountListFlags(body, { minPerPage = 1, maxPerPage = 100 } = {}) {
 	const limits = { page: [1, Number.MAX_SAFE_INTEGER], per_page: [minPerPage, maxPerPage] }
-	const params = new URLSearchParams()
+	const flags = {}
 	for (const [key, [min, max]] of Object.entries(limits)) {
 		const value = body[key]
 		if (value === undefined || value === null || value === '') continue
@@ -56,10 +56,9 @@ export function accountListQuery(body, { minPerPage = 1, maxPerPage = 100 } = {}
 					: `per_page must be a whole number from ${min} to ${max}`
 			)
 		}
-		params.set(key, String(number))
+		flags[key.replace('_', '-')] = number
 	}
-	const query = params.toString()
-	return query ? `?${query}` : ''
+	return flags
 }
 
 // The create or update data sent under `key`, which must be a JSON object.

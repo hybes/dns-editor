@@ -10,7 +10,10 @@
 		"start": "node .output/server/index.mjs",
 		"lint": "eslint .",
 		"lint:fix": "eslint --fix .",
-		"format": "prettier --write ."
+		"format": "prettier --write .",
+		"cf:sync": "node scripts/sync-cf.mjs",
+		"cf:check": "node scripts/check-cf-parity.mjs",
+		"test:e2e": "node scripts/test-e2e.mjs"
 	},
 	"devDependencies": {
 		"@iconify-json/lucide": "^1.2.131",
@@ -28,6 +31,7 @@
 		"@nuxt/eslint": "^1.17.0",
 		"@nuxt/ui": "^4.11.1",
 		"@vueuse/core": "^14.4.0",
+		"minisearch": "^7.2.0",
 		"openai": "^6.49.0",
 		"tailwindcss": "^4.3.3"
 	},

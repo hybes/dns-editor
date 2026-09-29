@@ -1,5 +1,6 @@
 import { createError } from 'h3'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { accountFields, readAccountBody, readAccountPayload, resolveAccountId } from '../utils/accountId'
 
 const ACTIONS = ['get', 'update', 'delete']
@@ -9,7 +10,7 @@ const MODES = ['managed', 'non-interactive', 'invisible']
 const CLEARANCE_LEVELS = ['no_clearance', 'jschallenge', 'managed', 'interactive']
 const REGIONS = ['world', 'china']
 
-// Cloudflare's update is a PUT that replaces the whole widget, so name, domains and mode are
+// cf's `update` is a PUT that replaces the whole widget, so name, domains and mode are
 // required even when only one setting changed.
 const readWidget = (body) => {
 	const widget = readAccountPayload(body, 'widget', 'Widget')
@@ -32,7 +33,7 @@ export default defineEventHandler(async (event) => {
 		const request = await readAccountBody(event, { idKey: 'sitekey', idLabel: 'Sitekey' })
 		const action = request.body.action || 'get'
 		if (!ACTIONS.includes(action)) {
-			throw createError({ statusCode: 400, statusMessage: 'Action must be get, update or delete' })
+			throw createError({ statusCode: 400, message: 'Action must be get, update or delete' })
 		}
 
 		const widget = action === 'update' ? readWidget(request.body) : null
@@ -40,26 +41,27 @@ export default defineEventHandler(async (event) => {
 		const { accountId, failure } = await resolveAccountId(request)
 		if (failure) return failure
 
-		const listPath = `/accounts/${accountId}/challenges/widgets`
-		const path = `${listPath}/${request.id}`
+		const target = { apiKey: request.apiKey, account: accountId, args: { sitekey: request.id } }
 
 		if (action === 'get') {
-			return await cfFetch({ apiKey: request.apiKey, method: 'GET', path })
+			return await cfCommand({ ...target, command: 'turnstile widgets get' })
 		}
 
-		const data = await cfFetch({
-			apiKey: request.apiKey,
-			method: action === 'update' ? 'PUT' : 'DELETE',
-			path,
+		const data = await cfCommand({
+			...target,
+			command: `turnstile widgets ${action}`,
 			body: widget || undefined
 		})
-		if (data?.success) invalidateCfCache({ apiKey: request.apiKey, paths: [listPath] })
+		if (data?.success) {
+			const listPath = await cfCommandPath('turnstile widgets list', { account: accountId })
+			invalidateCfCache({ apiKey: request.apiKey, paths: [listPath] })
+		}
 		return data
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

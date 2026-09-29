@@ -21,3 +21,14 @@ export const SETUP_LABELS = {
 	secondary: { short: 'Secondary DNS', long: 'Secondary DNS' },
 	internal: { short: 'Internal', long: 'Internal' }
 }
+
+// DNSSEC statuses from `cf dns dnssec get`, shared by Overview and the DNSSEC page.
+export const DNSSEC_STATUSES = {
+	active: { label: 'Active', color: 'success' },
+	pending: { label: 'Pending', color: 'warning' },
+	disabled: { label: 'Off', color: 'neutral' },
+	'pending-disabled': { label: 'Turning off', color: 'warning' },
+	error: { label: 'Error', color: 'error' }
+}
+
+export const dnssecStatusBadge = (status) => DNSSEC_STATUSES[status] || { label: status || 'Unknown', color: 'neutral' }

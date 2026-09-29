@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { cfFetch } from '../utils/cfFetch'
+import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 const HOUR_MS = 3_600_000
@@ -22,7 +23,7 @@ const MAX_SETTINGS_ENTRIES = 200
 const settingsCache = globalThis.__dnsAnalyticsSettingsCache || new Map()
 if (!globalThis.__dnsAnalyticsSettingsCache) globalThis.__dnsAnalyticsSettingsCache = settingsCache
 
-const badRequest = (message) => createError({ statusCode: 400, statusMessage: message })
+const badRequest = (message) => createError({ statusCode: 400, message: message })
 const errorEnvelope = (message) => ({ success: false, errors: [{ message }] })
 
 const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10)
@@ -83,6 +84,8 @@ const resolveRange = (body, now) => {
 	}
 }
 
+// cf has no GraphQL command (the Analytics API isn't part of the OpenAPI schema cf is built
+// from), so this is the one request that goes to Cloudflare directly.
 // GraphQL answers HTTP 200 with an `errors` array, while cfFetch reports timeouts and
 // HTTP failures as success:false, so both shapes collapse into one error message.
 const graphql = async (apiKey, query, variables) => {
@@ -204,10 +207,10 @@ export default defineEventHandler(async (event) => {
 		const range = resolveRange(body, now)
 		const fresh = body.fresh === true
 
-		const zoneData = await cfFetch({
+		const zoneData = await cfCommand({
 			apiKey: body.apiKey,
-			method: 'GET',
-			path: `/zones/${zoneId}`,
+			command: 'zones get',
+			zone: zoneId,
 			cacheTtl: ZONE_CACHE_TTL_MS,
 			fresh
 		})
@@ -292,7 +295,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

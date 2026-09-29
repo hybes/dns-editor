@@ -74,6 +74,7 @@
 
 					<template v-else-if="record">
 						<UAlert
+							v-if="canEdit"
 							color="neutral"
 							variant="subtle"
 							icon="i-lucide-info"
@@ -81,6 +82,14 @@
 							description="Change this record in the Cloudflare dashboard. You can still delete it here."
 							:actions="dashboardActions"
 						/>
+						<dl v-if="!canEdit" class="grid gap-x-4 gap-y-3 text-sm sm:grid-cols-[6rem_minmax(0,1fr)]">
+							<dt class="text-muted">Name</dt>
+							<dd class="text-highlighted font-mono break-all">{{ record.name }}</dd>
+							<dt class="text-muted">Proxy</dt>
+							<dd class="text-default">
+								{{ record.proxiable ? (record.proxied ? 'On' : 'Off') : 'Can’t be proxied' }}
+							</dd>
+						</dl>
 						<dl class="grid gap-x-4 gap-y-3 text-sm sm:grid-cols-[6rem_minmax(0,1fr)]">
 							<dt class="text-muted">Content</dt>
 							<dd class="text-highlighted font-mono break-all">{{ formatContent(record) || '—' }}</dd>
@@ -114,7 +123,7 @@
 				/>
 				<div class="flex items-center gap-2">
 					<UButton
-						v-if="record"
+						v-if="record && canDelete"
 						label="Delete"
 						icon="i-lucide-trash-2"
 						color="error"
@@ -201,7 +210,11 @@ const router = useRouter()
 const zoneId = computed(() => String(route.params.zone_id || ''))
 const recordId = computed(() => String(route.params.record_id || ''))
 
-const { zoneName, accountId, load: loadZone } = useZone(zoneId)
+const zoneApi = useZone(zoneId)
+const { zoneName, accountId, load: loadZone } = zoneApi
+// On a shared zone, the records level decides whether this panel edits or only shows the record.
+const canEdit = computed(() => zoneApi.allowed('records', 'edit'))
+const canDelete = computed(() => zoneApi.allowed('records', 'delete'))
 const { findRecord, upsert, remove } = useZoneRecords(zoneId)
 const { getRecordTypeColor, formatContent, formatTtl } = useRecordTypes()
 const { call } = useCfApi()
@@ -226,7 +239,8 @@ const deleteError = ref('')
 // While a save or delete is in flight the panel stays open: closing it wouldn't stop the change.
 const busy = computed(() => saving.value || deleting.value)
 
-const editable = computed(() => Boolean(record.value && CREATABLE_RECORD_TYPES.includes(record.value.type)))
+const editableType = computed(() => Boolean(record.value && CREATABLE_RECORD_TYPES.includes(record.value.type)))
+const editable = computed(() => editableType.value && canEdit.value)
 const recordLabel = computed(() => (record.value ? `${record.value.type} ${record.value.name}` : ''))
 
 const dashboardActions = computed(() =>

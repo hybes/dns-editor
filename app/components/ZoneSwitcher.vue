@@ -25,7 +25,20 @@ const props = defineProps({
 })
 
 // Sections every zone has; a deeper page such as one record falls back to its section.
-const ZONE_SECTIONS = ['records', 'rules', 'analytics', 'turnstile', 'dns-views', 'dns-firewall']
+const ZONE_SECTIONS = [
+	'records',
+	'dnssec',
+	'dns-settings',
+	'zone-transfers',
+	'settings',
+	'files',
+	'rules',
+	'analytics',
+	'turnstile',
+	'dns-views',
+	'dns-firewall',
+	'transfer-peers'
+]
 
 const route = useRoute()
 const { zones, loading } = useZones()

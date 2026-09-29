@@ -1,8 +1,9 @@
 import { createError } from 'h3'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import {
 	accountFields,
-	accountListQuery,
+	accountListFlags,
 	readAccountBody,
 	readAccountPayload,
 	resolveAccountId
@@ -15,7 +16,7 @@ const LIST_CACHE_TTL_MS = 15_000
 
 const ACTIONS = ['list', 'create', 'internal_zones']
 
-// Views can only link internal zones, and Cloudflare leaves those out of GET /zones unless
+// Views can only link internal zones, and Cloudflare leaves those out of `zones list` unless
 // asked, so the zone list the rest of the app uses never contains them.
 const ZONE_PAGE_SIZE = 50
 // 1,000 internal zones; the page offers pasting an ID for any beyond that.
@@ -25,7 +26,7 @@ const MAX_ZONE_PAGES = 20
 // Set by Cloudflare, so dropped if a client echoes them back from a fetched view.
 const READ_ONLY_FIELDS = ['id', 'created_time', 'modified_time']
 
-const badRequest = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 const readZones = (value) => {
 	const zones = accountFields.list(value, 'Zones', { min: 0 })
@@ -55,11 +56,10 @@ const listInternalZones = async ({ apiKey, accountId, fresh }) => {
 	let totalCount = 0
 
 	for (let page = 1; page <= MAX_ZONE_PAGES; page++) {
-		const query = `type=internal&account.id=${encodeURIComponent(accountId)}&page=${page}&per_page=${ZONE_PAGE_SIZE}`
-		const data = await cfFetch({
+		const data = await cfCommand({
 			apiKey,
-			method: 'GET',
-			path: `/zones?${query}`,
+			command: 'zones list',
+			flags: { type: 'internal', 'account-id': accountId, page, 'per-page': ZONE_PAGE_SIZE },
 			cacheTtl: LIST_CACHE_TTL_MS,
 			fresh
 		})
@@ -93,7 +93,7 @@ export default defineEventHandler(async (event) => {
 
 		// Check the input before looking up the account, so bad input fails fast.
 		const view = action === 'create' ? readView(request.body) : null
-		const query = action === 'list' ? accountListQuery(request.body, { maxPerPage: 5000 }) : ''
+		const flags = action === 'list' ? accountListFlags(request.body, { maxPerPage: 5000 }) : {}
 
 		const { accountId, failure } = await resolveAccountId(request)
 		if (failure) return failure
@@ -104,26 +104,33 @@ export default defineEventHandler(async (event) => {
 			return await listInternalZones({ apiKey: request.apiKey, accountId, fresh })
 		}
 
-		const path = `/accounts/${accountId}/dns_settings/views`
-
 		if (action === 'list') {
-			return await cfFetch({
+			return await cfCommand({
 				apiKey: request.apiKey,
-				method: 'GET',
-				path: `${path}${query}`,
+				command: 'dns settings account views list',
+				account: accountId,
+				flags,
 				cacheTtl: LIST_CACHE_TTL_MS,
 				fresh
 			})
 		}
 
-		const created = await cfFetch({ apiKey: request.apiKey, method: 'POST', path, body: view })
-		if (created?.success) invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		const created = await cfCommand({
+			apiKey: request.apiKey,
+			command: 'dns settings account views create',
+			account: accountId,
+			body: view
+		})
+		if (created?.success) {
+			const path = await cfCommandPath('dns settings account views list', { account: accountId })
+			invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		}
 		return created
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

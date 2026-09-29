@@ -39,3 +39,20 @@ export const formatNumber = (value) => numberFormat.format(Number(value) || 0)
 
 export const plural = (count, word, pluralWord = `${word}s`) =>
 	`${formatNumber(count)} ${count === 1 ? word : pluralWord}`
+
+// An amount in an ISO 4217 currency, as Cloudflare returns both (amounts are often strings).
+// `precise` keeps up to four decimal places, for usage that costs fractions of a cent. Returns
+// '' without a number and a currency.
+export const formatMoney = (amount, currency, { precise = false } = {}) => {
+	const value = amount === '' || amount === null || amount === undefined ? NaN : Number(amount)
+	if (!Number.isFinite(value) || !currency) return ''
+	try {
+		return new Intl.NumberFormat(LOCALE, {
+			style: 'currency',
+			currency,
+			...(precise && { maximumFractionDigits: 4 })
+		}).format(value)
+	} catch {
+		return `${formatNumber(value)} ${currency}`
+	}
+}

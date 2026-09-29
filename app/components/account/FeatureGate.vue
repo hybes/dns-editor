@@ -11,20 +11,17 @@
 		variant="subtle"
 		:icon="reason ? 'i-lucide-lock' : 'i-lucide-circle-alert'"
 		:title="reason ? `This token can’t use ${feature}` : `Couldn’t check access to ${feature}`"
-		:actions="[
-			{
-				label: 'Check again',
-				icon: 'i-lucide-refresh-cw',
-				color: 'neutral',
-				variant: 'outline',
-				loading: checking,
-				onClick: () => emit('retry')
-			}
-		]"
+		:actions="actions"
 	>
 		<template #description>
 			<p>{{ reason ? `Cloudflare said: ${reason}` : 'The access check didn’t finish. Try again.' }}</p>
 			<p v-if="reason && hint" class="mt-1">{{ hint }}</p>
+			<p v-if="reason" class="mt-1">
+				Or
+				<ULink to="/connections" class="text-highlighted underline"
+					>add a connection DNS Manager makes itself</ULink
+				>, with every permission it uses.
+			</p>
 		</template>
 	</UAlert>
 
@@ -32,9 +29,11 @@
 </template>
 
 <script setup>
+import { API_TOKENS_URL } from '#shared/utils/cloudflare'
+
 // Shows a feature's page only when the token can use it: a skeleton while access is being
 // checked, Cloudflare's reason when it can't, and a retry when the check itself failed.
-defineProps({
+const props = defineProps({
 	// useZone().capabilitiesLoaded
 	loaded: { type: Boolean, default: false },
 	// useZone().can(featureKey)
@@ -50,4 +49,28 @@ defineProps({
 })
 
 const emit = defineEmits(['retry'])
+
+// A missing permission is fixed on the token in Cloudflare, then checked again here.
+const actions = computed(() => [
+	{
+		label: 'Check again',
+		icon: 'i-lucide-refresh-cw',
+		color: 'neutral',
+		variant: 'outline',
+		loading: props.checking,
+		onClick: () => emit('retry')
+	},
+	...(props.reason
+		? [
+				{
+					label: 'Edit the token in Cloudflare',
+					icon: 'i-lucide-external-link',
+					color: 'neutral',
+					variant: 'outline',
+					to: API_TOKENS_URL,
+					target: '_blank'
+				}
+			]
+		: [])
+])
 </script>

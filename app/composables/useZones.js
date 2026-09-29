@@ -1,5 +1,7 @@
 const TTL_MS = 60_000
 let pending = null
+// Bumped by every request, so only the newest one updates the list.
+let latest = 0
 
 const emptyState = (key = '') => ({ key, items: [], fetchedAt: 0, loading: false, error: '' })
 
@@ -8,22 +10,25 @@ const emptyState = (key = '') => ({ key, items: [], fetchedAt: 0, loading: false
 // load() never throws; failures land in `error` for the caller to display.
 export function useZones() {
 	const state = useState('cf-zones', () => emptyState())
-	const { getApiKey } = useSession()
+	const { getSessionKey } = useSession()
 	const { call } = useCfApi()
+	const { isFresh } = useDataChanges()
 
 	const load = async ({ force = false } = {}) => {
-		const key = getApiKey()
+		const key = getSessionKey()
 		if (!key) return []
 		if (state.value.key !== key) {
 			state.value = emptyState(key)
 			pending = null
 		}
-		const fresh = state.value.fetchedAt && Date.now() - state.value.fetchedAt < TTL_MS
+		const fresh = isFresh(state.value.fetchedAt, TTL_MS)
 		if (!force && fresh) return state.value.items
-		if (pending) return pending
+		// A reload always asks again, rather than waiting on a request that may never finish.
+		if (pending && !force) return pending
 
-		// A response that arrives after a token change belongs to the old session; drop it.
-		const isCurrent = () => state.value?.key === key
+		// A response that arrives after a token change, or after a newer request, is dropped.
+		const id = ++latest
+		const isCurrent = () => state.value?.key === key && id === latest
 
 		state.value.loading = true
 		state.value.error = ''

@@ -31,6 +31,13 @@
 
 		<template #body>
 			<div class="mx-auto flex w-full max-w-3xl flex-col gap-10">
+				<ZoneAccessNote
+					v-if="zoneAccess.shared"
+					:access="zoneAccess"
+					area="settings"
+					subject="SSL/TLS and Bot Fight Mode"
+					class="-mb-6"
+				/>
 				<UAlert
 					v-if="error"
 					color="error"
@@ -87,6 +94,22 @@
 							<div v-if="zone.type" :class="rowClass">
 								<dt class="text-muted">Setup</dt>
 								<dd class="text-default">{{ setupLabel }}</dd>
+							</div>
+							<div v-if="dnssecStatus" :class="rowClass">
+								<dt class="text-muted">DNSSEC</dt>
+								<dd class="flex flex-wrap items-center gap-x-3 gap-y-1">
+									<UBadge
+										:color="dnssecStatusBadge(dnssecStatus).color"
+										variant="subtle"
+										:label="dnssecStatusBadge(dnssecStatus).label"
+									/>
+									<ULink
+										:to="`/zones/${zoneId}/dnssec`"
+										class="text-primary focus-visible:outline-primary rounded-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+									>
+										Manage DNSSEC
+									</ULink>
+								</dd>
 							</div>
 							<div v-if="zone.created_on" :class="rowClass">
 								<dt class="text-muted">Added to Cloudflare</dt>
@@ -205,7 +228,7 @@
 						</p>
 					</section>
 
-					<section aria-labelledby="ssl-heading" class="flex flex-col gap-3">
+					<section v-if="canViewSettings" aria-labelledby="ssl-heading" class="flex flex-col gap-3">
 						<div class="flex flex-col gap-1">
 							<h2 id="ssl-heading" class="text-highlighted text-base font-semibold">
 								SSL/TLS encryption
@@ -286,7 +309,7 @@
 								:items="SSL_MODES"
 								variant="table"
 								legend="Encryption mode"
-								:disabled="sslSaving || !sslEditable"
+								:disabled="sslSaving || !sslEditable || !canEditSettings"
 								:ui="{ legend: 'sr-only' }"
 							>
 								<template #label="{ item }">
@@ -315,6 +338,7 @@
 									</template>
 								</p>
 								<UButton
+									v-if="canEditSettings"
 									type="submit"
 									label="Save encryption mode"
 									:loading="sslSaving"
@@ -324,7 +348,7 @@
 						</form>
 					</section>
 
-					<section aria-labelledby="bot-heading" class="flex flex-col gap-3">
+					<section v-if="canViewSettings" aria-labelledby="bot-heading" class="flex flex-col gap-3">
 						<h2 id="bot-heading" class="text-highlighted text-base font-semibold">Bot Fight Mode</h2>
 
 						<div v-if="!capabilitiesLoaded" aria-busy="true">
@@ -396,7 +420,7 @@
 							v-else-if="botLoaded"
 							:model-value="botEnabled"
 							:loading="botSaving"
-							:disabled="botSaving"
+							:disabled="botSaving || !canEditSettings"
 							label="Bot Fight Mode"
 							description="Challenges requests that match patterns of known bots across the whole zone. It can also challenge legitimate automated traffic, such as monitoring or API clients, and rules can’t skip it."
 							:ui="{ root: 'border-default rounded-md border p-3', label: 'sr-only' }"
@@ -509,6 +533,7 @@ const rowClass = 'grid gap-1 py-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-6'
 
 const route = useRoute()
 const { call } = useCfApi()
+const { exec } = useCfCommands()
 const { copy, success: notifySuccess, error: notifyError } = useNotify()
 
 const {
@@ -522,8 +547,14 @@ const {
 	missingCapabilities,
 	can,
 	load,
-	refresh
+	refresh,
+	access: zoneAccess,
+	allowed
 } = useZone(() => route.params.zone_id)
+// On a zone shared with this account, whether its settings level lets the person see or change
+// SSL/TLS and Bot Fight Mode (own zones allow everything).
+const canViewSettings = computed(() => allowed('settings', 'view'))
+const canEditSettings = computed(() => allowed('settings', 'edit'))
 
 useSeoMeta({ title: () => (zoneName.value ? `Overview · ${zoneName.value}` : 'Overview') })
 
@@ -716,10 +747,30 @@ const setBotFightMode = async (value) => {
 	}
 }
 
+// DNSSEC status, shown as a row in the zone details. The DNSSEC page explains any failure, so
+// here a failed read just leaves the row out.
+const dnssecStatus = ref('')
+let dnssecToken = 0
+
+const loadDnssec = async () => {
+	const id = zoneId.value
+	const token = ++dnssecToken
+	dnssecStatus.value = ''
+	if (!id || !can('dnssec')) return
+	try {
+		const response = await exec('dns dnssec get', { zone: id })
+		if (token === dnssecToken) dnssecStatus.value = response?.result?.status || ''
+	} catch {
+		// Left out; see above.
+	}
+}
+
+watch([zoneId, () => capabilitiesLoaded.value && can('dnssec')], loadDnssec, { immediate: true })
+
 const refreshing = computed(() => loading.value || botLoading.value)
 
 const refreshAll = async () => {
-	await Promise.all([refresh(), can('botFightMode') ? loadBot({ fresh: true }) : null])
+	await Promise.all([refresh(), can('botFightMode') ? loadBot({ fresh: true }) : null, loadDnssec()])
 }
 
 const relatedLinks = computed(() => {

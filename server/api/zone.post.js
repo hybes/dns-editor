@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 const CACHE_TTL = 15000
@@ -10,16 +10,20 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 
 		// fresh:true skips the stored answer, so an explicit refresh shows changes made elsewhere.
 		const fresh = body.fresh === true
-		const get = (path) => cfFetch({ apiKey: body.apiKey, method: 'GET', path, cacheTtl: CACHE_TTL, fresh })
+		const run = (command, input) =>
+			cfCommand({ apiKey: body.apiKey, command, zone: zoneId, ...input, cacheTtl: CACHE_TTL, fresh })
 
-		const [data, sslData] = await Promise.all([get(`/zones/${zoneId}`), get(`/zones/${zoneId}/settings/ssl`)])
+		const [data, sslData] = await Promise.all([
+			run('zones get'),
+			run('zones settings get', { args: { 'setting-id': 'ssl' } })
+		])
 		if (!data?.success) return data
 
 		// The zone still loads when its SSL setting can't be read; the error says why.
@@ -32,7 +36,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Error fetching zone: ${error?.message || 'Unknown error'}`
+			message: `Error fetching zone: ${error?.message || 'Unknown error'}`
 		})
 	}
 })

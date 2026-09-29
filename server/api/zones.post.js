@@ -1,68 +1,74 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { listZones } from '../utils/cfLists'
+import { cfCommand } from '../utils/cfCommand'
+import { connectionsWithTokens, tokenFor } from '../utils/connections'
+import { sharedZones } from '../utils/shares'
 
-// 50 is the most Cloudflare returns per page of zones.
-const PER_PAGE = 50
-const CACHE_TTL = 30000
-// Large accounts list quickly without a burst of requests against Cloudflare's rate limit.
-const CONCURRENCY = 4
+const SHARED_TTL = 60_000
 
-const noResponse = (page) => ({
-	success: false,
-	errors: [{ message: `Cloudflare returned nothing for page ${page} of the zone list. Try again.` }]
-})
+// Zones others have shared with this account, read with each owner's connection. A zone the
+// owner can no longer see is still listed, marked unavailable, so it doesn't vanish silently.
+async function sharedList(userId, ownIds, fresh) {
+	const shared = sharedZones(userId).filter((item) => !ownIds.has(item.zoneId))
+	return Promise.all(
+		shared.map(async (item) => {
+			const tag = { owner: item.owner, shareId: item.shareId, levels: item.levels }
+			try {
+				const { token } = await tokenFor(item.ownerId, { zone: item.zoneId })
+				const zone = await cfCommand({
+					apiKey: token,
+					command: 'zones get',
+					zone: item.zoneId,
+					cacheTtl: SHARED_TTL,
+					fresh
+				})
+				if (zone?.success) return { ...zone.result, connection: null, shared: tag }
+			} catch {
+				// Listed as unavailable below.
+			}
+			return { id: item.zoneId, name: item.zoneName, status: 'unavailable', connection: null, shared: tag }
+		})
+	)
+}
 
+// Every zone the signed-in account's connections can see, each tagged with the connection it
+// came from ({ id, label }), then the zones others share with it, tagged `shared` ({ owner,
+// shareId, levels }). A zone two connections can see is listed once, under the first.
+// Body: { fresh? }. When some connections fail, the zones from the others still come back,
+// with the failures in `failures`; when all fail, the first failure is the answer.
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
-
-		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
-		}
-
-		const fetchPage = (page) =>
-			cfFetch({
-				apiKey: body.apiKey,
-				method: 'GET',
-				path: `/zones?page=${page}&per_page=${PER_PAGE}`,
-				cacheTtl: CACHE_TTL,
-				fresh: Boolean(body.fresh)
-			})
-
-		const first = await fetchPage(1)
-		if (!first?.success) return first || noResponse(1)
-
-		const totalPages = Math.max(1, Number(first.result_info?.total_pages) || 1)
-		const remaining = Array.from({ length: totalPages - 1 }, (_, index) => index + 2)
-		const pages = []
-		let next = 0
-		let failure = null
-
-		// A list with a page missing would hide zones without saying so, so one failed page
-		// fails the whole request and no further pages are started.
-		const worker = async () => {
-			while (!failure && next < remaining.length) {
-				const index = next++
-				const page = remaining[index]
-				const data = await fetchPage(page)
-				if (data?.success) pages[index] = data.result || []
-				else failure ||= data || noResponse(page)
-			}
-		}
-		await Promise.all(Array.from({ length: Math.min(CONCURRENCY, remaining.length) }, worker))
-		if (failure) return failure
-
-		// A zone added or removed mid-listing shifts page boundaries, which can repeat a zone.
+		const userId = event.context.user.id
+		const connections = connectionsWithTokens(userId)
+		const lists = await Promise.all(
+			connections.map((connection) => listZones(connection.token, { fresh: Boolean(body.fresh) }))
+		)
 		const byId = new Map()
-		for (const zone of [first.result || [], ...pages].flat()) {
-			if (zone?.id) byId.set(zone.id, zone)
-		}
-		const result = [...byId.values()]
-
+		const failures = []
+		lists.forEach((list, index) => {
+			const { id, label } = connections[index]
+			if (!list?.success) {
+				failures.push({
+					connection: { id, label },
+					message: list?.errors?.[0]?.message || 'Cloudflare didn’t answer'
+				})
+				return
+			}
+			for (const zone of list.result) {
+				if (!byId.has(zone.id)) byId.set(zone.id, { ...zone, connection: { id, label } })
+			}
+		})
+		const shared = await sharedList(userId, new Set(byId.keys()), Boolean(body.fresh))
+		if (connections.length && failures.length === connections.length && !shared.length) return lists[0]
+		const result = [...byId.values(), ...shared]
 		return {
-			...first,
+			success: true,
+			errors: [],
+			messages: [],
 			result,
+			failures,
 			result_info: {
 				page: 1,
 				per_page: result.length,
@@ -73,9 +79,6 @@ export default defineEventHandler(async (event) => {
 		}
 	} catch (error) {
 		if (error?.statusCode) throw error
-		throw createError({
-			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
-		})
+		throw createError({ statusCode: 500, message: error?.message || 'Unknown error' })
 	}
 })

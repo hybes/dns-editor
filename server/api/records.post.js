@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Couldn’t load DNS records: ${error?.message || 'unknown error'}`
+			message: `Couldn’t load DNS records: ${error?.message || 'unknown error'}`
 		})
 	}
 })

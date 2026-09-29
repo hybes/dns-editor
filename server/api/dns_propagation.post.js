@@ -125,14 +125,14 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		const parsed = normaliseLookupName(body.name, { allowWildcard: true })
-		if (parsed.error) throw createError({ statusCode: 400, statusMessage: parsed.error })
+		if (parsed.error) throw createError({ statusCode: 400, message: parsed.error })
 
 		let type = typeof body.type === 'string' ? body.type.trim().toUpperCase() : 'A'
 		if (parsed.reverse) type = 'PTR'
 		if (!PROPAGATION_TYPES.includes(type)) {
 			throw createError({
 				statusCode: 400,
-				statusMessage: `${type ? `${type} records` : 'That record type'} can’t be checked for propagation. DNS Lookup can show what public resolvers return for it.`
+				message: `${type ? `${type} records` : 'That record type'} can’t be checked for propagation. DNS Lookup can show what public resolvers return for it.`
 			})
 		}
 
@@ -140,7 +140,7 @@ export default defineEventHandler(async (event) => {
 		if (rawExpected.length > MAX_EXPECTED_LENGTH) {
 			throw createError({
 				statusCode: 400,
-				statusMessage: 'Expected value is too long.',
+				message: 'Expected value is too long.',
 				data: { field: 'expected' }
 			})
 		}
@@ -232,7 +232,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Propagation check failed: ${error?.message || 'Unknown error'}`
+			message: `Propagation check failed: ${error?.message || 'Unknown error'}`
 		})
 	}
 })

@@ -16,6 +16,7 @@
 
 				<template #right>
 					<UButton
+						v-if="canEdit"
 						icon="i-lucide-plus"
 						label="Add record"
 						aria-label="Add record"
@@ -23,7 +24,7 @@
 						:ui="{ label: 'hidden sm:inline' }"
 					/>
 					<UButton
-						v-if="aiAvailable"
+						v-if="aiAvailable && canEdit"
 						icon="i-lucide-clipboard-paste"
 						label="AI editor"
 						aria-label="AI editor"
@@ -129,7 +130,9 @@
 						/>
 					</template>
 					<template v-else>
-						<p v-if="loaded" class="text-muted text-sm tabular-nums" aria-live="polite">{{ countLabel }}</p>
+						<p v-if="loaded" class="text-muted text-sm tabular-nums" aria-live="polite">
+							{{ countLabel }}<template v-if="quotaLabel"> · {{ quotaLabel }}</template>
+						</p>
 						<UDropdownMenu :items="columnItems" :content="{ align: 'end' }">
 							<UButton
 								icon="i-lucide-columns-3"
@@ -145,6 +148,7 @@
 		</template>
 
 		<template #body>
+			<ZoneAccessNote :access="zoneAccess" area="records" subject="records" />
 			<UAlert
 				v-if="recordsError"
 				color="error"
@@ -181,6 +185,15 @@
 						onClick: refreshRecords
 					}
 				]"
+			/>
+
+			<UAlert
+				v-if="quotaWarning"
+				color="warning"
+				variant="subtle"
+				icon="i-lucide-triangle-alert"
+				:title="quotaWarning.title"
+				:description="quotaWarning.description"
 			/>
 
 			<UAlert
@@ -344,7 +357,7 @@
 							v-if="row.original.record.proxiable"
 							:model-value="proxiedState(row.original.record)"
 							:loading="row.original.id in pendingProxy"
-							:disabled="row.original.id in pendingProxy"
+							:disabled="row.original.id in pendingProxy || !canEdit"
 							:aria-label="`Proxy ${row.original.label} through Cloudflare`"
 							@update:model-value="(value) => setProxied(row.original, value)"
 						/>
@@ -571,6 +584,8 @@
 
 			<AiDnsEditorModal v-if="aiAvailable" v-model:open="aiOpen" :zone-id="zoneId" :zone-name="zoneName" />
 
+			<RecordScanSlideover v-model:open="scanOpen" :zone-id="zoneId" :zone-name="zoneName" />
+
 			<!-- The record create/edit panel opens over the table, which stays mounted. -->
 			<NuxtPage />
 		</template>
@@ -610,6 +625,9 @@ const RELATIVE_UNITS = [
 	['minute', 60]
 ]
 const TABLE_META = { class: { tr: 'group/row' } }
+// The record quota warning shows from this share of the limit.
+const QUOTA_WARNING_RATIO = 0.9
+const USAGE_REFRESH_DELAY_MS = 1_000
 
 const columns = [
 	{ id: 'select', header: '', meta: { class: { th: 'w-10', td: 'w-10' } } },
@@ -627,11 +645,16 @@ const route = useRoute()
 const router = useRouter()
 const notify = useNotify()
 const { call } = useCfApi()
+const { exec } = useCfCommands()
 const { getRecordTypeColor, formatContent, formatTtl, getExpectedDnsValue } = useRecordTypes()
 
 const zoneId = computed(() => String(route.params.zone_id || ''))
 const zoneApi = useZone(zoneId)
-const { zoneName, loading: zoneLoading, error: zoneError } = zoneApi
+const { zoneName, loading: zoneLoading, error: zoneError, access: zoneAccess } = zoneApi
+// On a zone shared with this account, what its records level allows (own zones allow everything).
+// The server checks the same; this only hides what would be refused.
+const canEdit = computed(() => zoneApi.allowed('records', 'edit'))
+const canDelete = computed(() => zoneApi.allowed('records', 'delete'))
 const recordsApi = useZoneRecords(zoneId)
 const { records, loading, loaded, partial, error: recordsError } = recordsApi
 
@@ -828,6 +851,61 @@ const rangeLabel = computed(() => {
 	return `${formatNumber(start)}–${formatNumber(end)} of ${formatNumber(total)}`
 })
 
+// Record quota: Cloudflare's count against the zone's limit, loaded with the list and again
+// whenever its length changes, so creates, deletes, imports and scans show up. Quiet: a
+// failure, or a zone on an account-wide quota (no zone limit), just hides the figure.
+
+// Tagged with its zone; an answer is kept only if it's the newest and the zone hasn't changed.
+const usage = ref(null)
+let usageToken = 0
+
+const loadUsage = async (zone) => {
+	if (!zone || zone !== zoneId.value) return
+	const token = ++usageToken
+	const isCurrent = () => token === usageToken && zone === zoneId.value
+	try {
+		const response = await exec('dns usage account get', { zone, target: 'zone' })
+		if (!isCurrent()) return
+		const { record_usage: used, record_quota: limit } = response?.result || {}
+		usage.value = Number.isFinite(used) && Number.isFinite(limit) && limit > 0 ? { zone, used, limit } : null
+	} catch {
+		if (isCurrent()) usage.value = null
+	}
+}
+const refreshUsage = useDebounceFn(loadUsage, USAGE_REFRESH_DELAY_MS)
+
+watch(
+	() => (loaded.value ? `${zoneId.value}:${records.value.length}` : ''),
+	(key) => {
+		if (!key) return
+		// The first figure for a zone loads straight away; later ones wait for edits to settle.
+		if (usage.value?.zone === zoneId.value) refreshUsage(zoneId.value)
+		else loadUsage(zoneId.value)
+	},
+	{ immediate: true }
+)
+
+const quota = computed(() => (usage.value?.zone === zoneId.value ? usage.value : null))
+const quotaLabel = computed(() =>
+	quota.value ? `${formatNumber(quota.value.used)} of ${formatNumber(quota.value.limit)} allowed` : ''
+)
+const quotaWarning = computed(() => {
+	const value = quota.value
+	if (!value || value.used < value.limit * QUOTA_WARNING_RATIO) return null
+	const zone = zoneName.value || 'This zone'
+	const limit = formatNumber(value.limit)
+	if (value.used >= value.limit) {
+		return {
+			title: `${zone} has reached its limit of ${limit} records`,
+			description: 'Cloudflare refuses new records, including imported and scanned ones, until you delete some.'
+		}
+	}
+	return {
+		title: `${zone} is close to its record limit`,
+		description: `It has ${formatNumber(value.used)} of the ${limit} records Cloudflare allows. Once it reaches the limit, new records are refused, including imported and scanned ones.`
+	}
+})
+
 const describeFilters = () => {
 	const types = selectedTypes.value.length ? typeList.format(selectedTypes.value) : ''
 	if (types && search.value) return `No ${types} records contain “${search.value}”.`
@@ -852,12 +930,23 @@ const emptyState = computed(() => {
 			]
 		}
 	}
+	if (!canEdit.value) {
+		return { icon: 'i-lucide-list', title: `${zoneName.value || 'This zone'} has no DNS records` }
+	}
 	return {
 		icon: 'i-lucide-list',
 		title: `${zoneName.value || 'This zone'} has no DNS records`,
-		description: 'Add a record, or import a zone file exported from your previous DNS provider.',
+		description:
+			'Add a record, scan your current DNS provider for common records, or import a zone file exported from it.',
 		actions: [
 			{ label: 'Add record', icon: 'i-lucide-plus', to: createLink.value },
+			{
+				label: 'Scan for records',
+				icon: 'i-lucide-scan-search',
+				color: 'neutral',
+				variant: 'outline',
+				onClick: openScan
+			},
 			{
 				label: 'Import zone file',
 				icon: 'i-lucide-upload',
@@ -890,9 +979,22 @@ const isHidden = (id) => Array.isArray(hiddenColumns.value) && hiddenColumns.val
 // Phones get one stacked column instead of crushed ones. Name and actions can't be hidden.
 const columnVisibility = computed(() => {
 	if (isMobile.value) {
-		return { summary: true, type: false, name: false, value: false, ttl: false, proxied: false, modified: false }
+		return {
+			select: canDelete.value,
+			summary: true,
+			type: false,
+			name: false,
+			value: false,
+			ttl: false,
+			proxied: false,
+			modified: false
+		}
 	}
-	return { summary: false, ...Object.fromEntries(HIDEABLE_COLUMNS.map(({ id }) => [id, !isHidden(id)])) }
+	return {
+		select: canDelete.value,
+		summary: false,
+		...Object.fromEntries(HIDEABLE_COLUMNS.map(({ id }) => [id, !isHidden(id)]))
+	}
 })
 
 const columnItems = computed(() =>
@@ -1011,11 +1113,13 @@ const rowActions = (row) => {
 	const { record } = row
 	const isWildcard = record.name.includes('*')
 	const items = [
-		{ label: 'Edit', icon: 'i-lucide-pencil', to: editLink(record.id) },
+		canEdit.value
+			? { label: 'Edit', icon: 'i-lucide-pencil', to: editLink(record.id) }
+			: { label: 'View details', icon: 'i-lucide-panel-right-open', to: editLink(record.id) },
 		{ label: 'Copy value', icon: 'i-lucide-copy', disabled: !row.value, onSelect: () => copyValue(row) }
 	]
 	// The stacked phone layout and a hidden Proxy column have no switch, so offer it here.
-	if (record.proxiable && columnVisibility.value.proxied !== true) {
+	if (canEdit.value && record.proxiable && columnVisibility.value.proxied !== true) {
 		const proxied = proxiedState(record)
 		items.push({
 			label: proxied ? 'Turn proxy off' : 'Turn proxy on',
@@ -1035,6 +1139,7 @@ const rowActions = (row) => {
 			target: '_blank'
 		})
 	}
+	if (!canDelete.value) return [items]
 	return [items, [{ label: 'Delete', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => openDelete([row]) }]]
 }
 
@@ -1233,7 +1338,12 @@ const exportZone = async () => {
 
 const moreItems = computed(() => [
 	[
-		{ label: 'Import zone file', icon: 'i-lucide-upload', onSelect: openImport },
+		...(canEdit.value
+			? [
+					{ label: 'Import zone file', icon: 'i-lucide-upload', onSelect: openImport },
+					{ label: 'Scan for records', icon: 'i-lucide-scan-search', onSelect: openScan }
+				]
+			: []),
 		{
 			label: exporting.value ? 'Exporting zone file…' : 'Export zone file',
 			icon: 'i-lucide-download',
@@ -1251,6 +1361,18 @@ const moreItems = computed(() => [
 	]
 ])
 
+// Record scan: looks for common records at the domain's current DNS provider.
+
+const scanOpen = ref(false)
+const openScan = () => {
+	scanOpen.value = true
+}
+
+// Results belong to one zone, so the panel doesn't stay open across a zone switch.
+watch(zoneId, () => {
+	scanOpen.value = false
+})
+
 // AI editor: only offered when the server has an OpenAI key.
 
 const aiStatus = useState('dns-ai-editor-status', () => null)
@@ -1260,7 +1382,7 @@ const aiOpen = ref(false)
 onMounted(async () => {
 	if (aiStatus.value) return
 	try {
-		const response = await call('ai_dns_editor/status', {}, { auth: false })
+		const response = await call('ai_dns_editor/status', {})
 		aiStatus.value = response?.result || null
 	} catch {
 		// Leave the button hidden; the next visit asks again.

@@ -1,8 +1,9 @@
 import { createError } from 'h3'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import {
 	accountFields,
-	accountListQuery,
+	accountListFlags,
 	readAccountBody,
 	readAccountPayload,
 	resolveAccountId
@@ -38,36 +39,43 @@ export default defineEventHandler(async (event) => {
 		const request = await readAccountBody(event)
 		const action = request.body.action || 'list'
 		if (action !== 'list' && action !== 'create') {
-			throw createError({ statusCode: 400, statusMessage: 'Action must be list or create' })
+			throw createError({ statusCode: 400, message: 'Action must be list or create' })
 		}
 
 		// Check the input before looking up the account, so bad input fails fast.
 		const widget = action === 'create' ? readWidget(request.body) : null
-		const query = action === 'list' ? accountListQuery(request.body, { minPerPage: 5, maxPerPage: 1000 }) : ''
+		const flags = action === 'list' ? accountListFlags(request.body, { minPerPage: 5, maxPerPage: 1000 }) : {}
 
 		const { accountId, failure } = await resolveAccountId(request)
 		if (failure) return failure
 
-		const path = `/accounts/${accountId}/challenges/widgets`
-
 		if (action === 'list') {
-			return await cfFetch({
+			return await cfCommand({
 				apiKey: request.apiKey,
-				method: 'GET',
-				path: `${path}${query}`,
+				command: 'turnstile widgets list',
+				account: accountId,
+				flags,
 				cacheTtl: LIST_CACHE_TTL_MS,
 				fresh: request.body.fresh === true
 			})
 		}
 
-		const created = await cfFetch({ apiKey: request.apiKey, method: 'POST', path, body: widget })
-		if (created?.success) invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		const created = await cfCommand({
+			apiKey: request.apiKey,
+			command: 'turnstile widgets create',
+			account: accountId,
+			body: widget
+		})
+		if (created?.success) {
+			const path = await cfCommandPath('turnstile widgets list', { account: accountId })
+			invalidateCfCache({ apiKey: request.apiKey, paths: [path] })
+		}
 		return created
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

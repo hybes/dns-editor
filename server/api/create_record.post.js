@@ -1,10 +1,11 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { buildRecordBody } from '../utils/dnsRecordBody'
 import { readId } from '../utils/ids'
 
-const invalid = (statusMessage) => createError({ statusCode: 400, statusMessage })
+const invalid = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
 export default defineEventHandler(async (event) => {
 	try {
@@ -13,15 +14,15 @@ export default defineEventHandler(async (event) => {
 		if (!body.apiKey) throw invalid('API key is required')
 		const zoneId = readId(body.currZone, 'Zone ID')
 
-		const result = await cfFetch({
+		const result = await cfCommand({
 			apiKey: body.apiKey,
-			method: 'POST',
-			path: `/zones/${zoneId}/dns_records`,
+			command: 'dns records create',
+			zone: zoneId,
 			body: buildRecordBody(body.dns)
 		})
 
 		if (result?.success) {
-			invalidateCfCache({ apiKey: body.apiKey, paths: [`/zones/${zoneId}`] })
+			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 		}
 
 		return result
@@ -29,7 +30,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Couldn’t create the record: ${error?.message || 'Unknown error'}`
+			message: `Couldn’t create the record: ${error?.message || 'Unknown error'}`
 		})
 	}
 })

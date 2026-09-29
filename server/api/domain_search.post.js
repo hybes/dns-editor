@@ -9,7 +9,11 @@ import { getTldPricing } from '../utils/domainPricing'
 // is the fallback hint for registries without RDAP. Purchase itself happens at the
 // registrar, so each result carries deep links rather than an in-app checkout.
 
-const MAX_TLDS = 15
+const MAX_TLDS = 30
+// Several names can be compared at once, each across the chosen endings. The total is capped
+// so one search can't turn into hundreds of registry queries.
+const MAX_NAMES = 30
+const MAX_CANDIDATES = 60
 const CONCURRENCY = 6
 // How long prices may lag behind the registry checks before results go out without them.
 const PRICING_GRACE_MS = 1500
@@ -107,29 +111,57 @@ export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
 
-		const term = normaliseSearchTerm(body.query)
-		if (term.error) throw createError({ statusCode: 400, statusMessage: term.error })
+		// `names` is a list; `query` may hold several names separated by commas, semicolons or
+		// lines. Spaces inside a name are dropped, so "coffee shop" is checked as coffeeshop.
+		const rawNames = Array.isArray(body.names) ? body.names : String(body.query ?? '').split(/[,;\n]+/)
+		const names = [...new Set(rawNames.map((name) => String(name).replace(/\s+/g, '')).filter(Boolean))]
+		if (!names.length) throw createError({ statusCode: 400, message: 'Enter a name to search for.' })
+		if (names.length > MAX_NAMES) {
+			throw createError({ statusCode: 400, message: `Compare up to ${MAX_NAMES} names at a time.` })
+		}
 
 		const tlds = [...new Set((Array.isArray(body.tlds) ? body.tlds : []).map(normaliseTld).filter(Boolean))]
 		if (tlds.length > MAX_TLDS) {
-			throw createError({ statusCode: 400, statusMessage: `Choose up to ${MAX_TLDS} domain endings at a time.` })
+			throw createError({ statusCode: 400, message: `Choose up to ${MAX_TLDS} domain endings at a time.` })
 		}
 
 		// Registries only know registrable names, so a subdomain is reduced to its parent
 		// (shop.example.com → example.com) before anything is checked.
-		const baseLabel = term.base.split('.').pop()
-		const reducedFrom = baseLabel === term.base ? '' : term.name
-		const exact = term.tld ? `${baseLabel}.${term.tld}` : ''
+		const bases = []
 		const candidates = []
-		if (exact) candidates.push(exact)
-		for (const tld of tlds) {
-			const candidate = `${baseLabel}.${tld}`
-			if (!candidates.includes(candidate)) candidates.push(candidate)
+		const baseOf = new Map()
+		for (const name of names) {
+			const term = normaliseSearchTerm(name)
+			if (term.error) {
+				throw createError({
+					statusCode: 400,
+					message: names.length > 1 ? `${name}: ${term.error}` : term.error
+				})
+			}
+			const baseLabel = term.base.split('.').pop()
+			const exact = term.tld ? `${baseLabel}.${term.tld}` : ''
+			bases.push({
+				query: term.original,
+				base: baseLabel,
+				exact,
+				reducedFrom: baseLabel === term.base ? '' : term.name
+			})
+			for (const candidate of [exact, ...tlds.map((tld) => `${baseLabel}.${tld}`)].filter(Boolean)) {
+				if (baseOf.has(candidate)) continue
+				baseOf.set(candidate, baseLabel)
+				candidates.push(candidate)
+			}
 		}
 		if (!candidates.length) {
 			throw createError({
 				statusCode: 400,
-				statusMessage: 'Add a domain ending or choose at least one to check.'
+				message: 'Add a domain ending or choose at least one to check.'
+			})
+		}
+		if (candidates.length > MAX_CANDIDATES) {
+			throw createError({
+				statusCode: 400,
+				message: `That’s ${candidates.length} names to check, and the most at once is ${MAX_CANDIDATES}. Choose fewer names, variations or endings.`
 			})
 		}
 
@@ -139,15 +171,18 @@ export default defineEventHandler(async (event) => {
 		const pricingPromise = getTldPricing()
 		const checked = await runWithConcurrency(candidates, checkDomain)
 		const pricing = await withinGrace(pricingPromise, PRICING_GRACE_MS)
-		const results = checked.map((item) => ({ ...item, price: priceFor(item.tld, pricing) }))
+		const results = checked.map((item) => ({
+			...item,
+			base: baseOf.get(item.domain),
+			price: priceFor(item.tld, pricing)
+		}))
 
 		return {
 			success: true,
 			result: {
-				query: term.original,
-				base: baseLabel,
-				exact,
-				reducedFrom,
+				// The first name's details, as before several names could be searched at once.
+				...bases[0],
+				bases,
 				results,
 				pricing: pricing
 					? { source: pricing.source, currency: pricing.currency, fetchedAt: pricing.fetchedAt }
@@ -159,7 +194,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Domain search failed: ${error?.message || 'Unknown error'}`
+			message: `Domain search failed: ${error?.message || 'Unknown error'}`
 		})
 	}
 })

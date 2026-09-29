@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { createError } from 'h3'
 import { readJsonBody } from '../../utils/readJsonBody'
-import { cfFetch } from '../../utils/cfFetch'
+import { cfCommand } from '../../utils/cfCommand'
 import { buildDnsPlan, dnsPlanSchema, fetchAllDnsRecords } from '../../utils/dnsEditor'
 import { readId } from '../../utils/ids'
 
@@ -37,37 +37,32 @@ export default defineEventHandler(async (event) => {
 		const input = String(body.input || '').trim()
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 
 		if (!input) {
-			throw createError({ statusCode: 400, statusMessage: 'Paste the DNS instructions you want to analyse' })
+			throw createError({ statusCode: 400, message: 'Paste the DNS instructions you want to analyse' })
 		}
 
 		if (input.length > MAX_INPUT_LENGTH) {
 			throw createError({
 				statusCode: 400,
-				statusMessage: `That text is too long. Paste up to ${MAX_INPUT_LENGTH.toLocaleString('en-GB')} characters at a time.`
+				message: `That text is too long. Paste up to ${MAX_INPUT_LENGTH.toLocaleString('en-GB')} characters at a time.`
 			})
 		}
 
 		if (!config.openaiApiKey) {
 			throw createError({
 				statusCode: 503,
-				statusMessage: 'The AI editor isn’t set up on this server. Set OPENAI_API_KEY and restart it.'
+				message: 'The AI editor isn’t set up on this server. Set OPENAI_API_KEY and restart it.'
 			})
 		}
 
 		// Use the zone's real name rather than whatever the page sent, so proposed names
 		// always stay inside this zone.
-		const zoneData = await cfFetch({
-			apiKey: body.apiKey,
-			method: 'GET',
-			path: `/zones/${zoneId}`,
-			cacheTtl: 15000
-		})
+		const zoneData = await cfCommand({ apiKey: body.apiKey, command: 'zones get', zone: zoneId, cacheTtl: 15000 })
 
 		if (!zoneData?.success || !zoneData.result?.name) {
 			return cloudflareFailure(zoneData, 'Couldn’t load this zone from Cloudflare')
@@ -98,7 +93,7 @@ export default defineEventHandler(async (event) => {
 					// OpenAI's own message (bad key, quota, unknown model) is what the operator needs.
 					throw createError({
 						statusCode: 502,
-						statusMessage: `OpenAI couldn’t prepare a plan: ${error?.message || 'unknown error'}`
+						message: `OpenAI couldn’t prepare a plan: ${error?.message || 'unknown error'}`
 					})
 				}),
 			fetchAllDnsRecords({ apiKey: body.apiKey, zoneId, cacheTtl: 15000 })
@@ -114,7 +109,7 @@ export default defineEventHandler(async (event) => {
 		} catch {
 			throw createError({
 				statusCode: 502,
-				statusMessage: 'OpenAI returned a plan this server couldn’t read. Try again.'
+				message: 'OpenAI returned a plan this server couldn’t read. Try again.'
 			})
 		}
 
@@ -139,7 +134,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Couldn’t prepare a plan: ${error?.message || 'unknown error'}`
+			message: `Couldn’t prepare a plan: ${error?.message || 'unknown error'}`
 		})
 	}
 })

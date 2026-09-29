@@ -453,7 +453,7 @@ const runLookup = async (params) => {
 		const data = await call(
 			'dns_lookup',
 			{ name: params.name, type: params.type, resolvers: params.resolvers },
-			{ auth: false, fallback: 'The lookup failed' }
+			{ fallback: 'The lookup failed' }
 		)
 		if (id !== requestId) return
 		result.value = data.result

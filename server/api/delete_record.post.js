@@ -1,6 +1,7 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch, invalidateCfCache } from '../utils/cfFetch'
+import { invalidateCfCache } from '../utils/cfFetch'
+import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 export default defineEventHandler(async (event) => {
@@ -8,21 +9,22 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
 		const recordId = readId(body.currDnsRecord, 'DNS record ID')
 
-		const result = await cfFetch({
+		const result = await cfCommand({
 			apiKey: body.apiKey,
-			method: 'DELETE',
-			path: `/zones/${zoneId}/dns_records/${recordId}`
+			command: 'dns records delete',
+			zone: zoneId,
+			args: { 'dns-record-id': recordId }
 		})
 
 		// Drop cached record lists so the next load can't bring the deleted record back.
 		if (result?.success) {
-			invalidateCfCache({ apiKey: body.apiKey, paths: [`/zones/${zoneId}`] })
+			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 		}
 
 		return result
@@ -30,7 +32,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: `Couldn’t delete the DNS record: ${error?.message || 'unknown error'}`
+			message: `Couldn’t delete the DNS record: ${error?.message || 'unknown error'}`
 		})
 	}
 })

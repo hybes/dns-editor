@@ -26,7 +26,14 @@ ENV NODE_ENV=production \
 
 COPY --from=build /app/.output ./.output
 
+# Accounts, sessions and encrypted Cloudflare tokens live in a SQLite database here. Mount a
+# volume on it (docker run -v dns-manager-data:/app/.data) so they survive a new container.
+RUN mkdir -p /app/.data && chown node:node /app/.data
+VOLUME /app/.data
+
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 USER node
 # OPENAI_API_KEY (and any other secrets) are injected at runtime by the platform —
 # they are read via runtimeConfig and are intentionally NOT baked into the image.

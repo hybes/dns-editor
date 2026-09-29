@@ -47,7 +47,7 @@
 				:available="canUse"
 				feature="DNS Views"
 				:reason="accessReason"
-				hint="Check that the token has access to this account’s DNS settings, then check again."
+				hint="DNS Views are part of Internal DNS, which Cloudflare offers to Enterprise customers. The token also needs DNS Views Edit for this account."
 				:checking="zoneLoading"
 				@retry="refreshZone"
 			>

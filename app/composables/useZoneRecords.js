@@ -16,17 +16,18 @@ export function useZoneRecords(zoneIdSource) {
 	const zoneId = computed(() => String(toValue(zoneIdSource) || ''))
 	const cache = useState('cf-zone-records', () => ({}))
 	const { call } = useCfApi()
-	const { getApiKey } = useSession()
+	const { getSessionKey } = useSession()
+	const { isFresh } = useDataChanges()
 
 	const entry = computed(() => cache.value?.[zoneId.value] || null)
 
 	const load = async ({ force = false } = {}) => {
 		const id = zoneId.value
-		const key = getApiKey()
+		const key = getSessionKey()
 		if (!id || !key) return []
 
 		const current = cache.value[id]
-		if (!force && current?.fetchedAt && Date.now() - current.fetchedAt < TTL_MS) return current.items
+		if (!force && isFresh(current?.fetchedAt, TTL_MS)) return current.items
 
 		const editCount = edits.get(id) || 0
 		const inFlight = pending.get(id)
@@ -43,7 +44,7 @@ export function useZoneRecords(zoneIdSource) {
 			error: ''
 		}
 
-		const isNewest = () => latest.get(id) === token && getApiKey() === key && Boolean(cache.value?.[id])
+		const isNewest = () => latest.get(id) === token && getSessionKey() === key && Boolean(cache.value?.[id])
 		let outdated = false
 
 		const request = call('records', { currZone: id, fresh: force }, { fallback: 'Couldn’t load DNS records' })

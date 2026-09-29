@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { cfFetch } from '../utils/cfFetch'
+import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 
 // Cloudflare returns at most 50 rulesets a page. A zone rarely needs more than one page;
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
 		const body = await readJsonBody(event)
 
 		if (!body.apiKey) {
-			throw createError({ statusCode: 400, statusMessage: 'API key is required' })
+			throw createError({ statusCode: 400, message: 'API key is required' })
 		}
 
 		const zoneId = readId(body.currZone, 'Zone ID')
@@ -22,13 +22,11 @@ export default defineEventHandler(async (event) => {
 		let cursor = ''
 
 		for (let page = 0; page < MAX_PAGES; page++) {
-			const query = new URLSearchParams({ per_page: String(PAGE_SIZE) })
-			if (cursor) query.set('cursor', cursor)
-
-			const data = await cfFetch({
+			const data = await cfCommand({
 				apiKey: body.apiKey,
-				method: 'GET',
-				path: `/zones/${zoneId}/rulesets?${query}`
+				command: 'rulesets account-rulesets list',
+				zone: zoneId,
+				flags: { 'per-page': PAGE_SIZE, cursor: cursor || undefined }
 			})
 			if (!data?.success) return data
 
@@ -42,7 +40,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
-			statusMessage: error?.message || 'Unknown error'
+			message: error?.message || 'Unknown error'
 		})
 	}
 })

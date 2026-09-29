@@ -45,7 +45,7 @@
 					<UFormField
 						label="From (UTC)"
 						size="sm"
-						:error="inputErrors.from"
+						:error="inputErrors.from || undefined"
 						:ui="{ root: 'flex items-start gap-2', wrapper: 'pt-1.5', error: 'mt-1 max-w-72' }"
 					>
 						<UInput
@@ -60,7 +60,7 @@
 					<UFormField
 						label="To (UTC)"
 						size="sm"
-						:error="inputErrors.to"
+						:error="inputErrors.to || undefined"
 						:ui="{ root: 'flex items-start gap-2', wrapper: 'pt-1.5', error: 'mt-1 max-w-72' }"
 					>
 						<UInput

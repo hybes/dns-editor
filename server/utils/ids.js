@@ -10,9 +10,9 @@ export const isCloudflareId = (value) => typeof value === 'string' && CLOUDFLARE
 // Returns the trimmed ID, or throws a 400 naming the field.
 export const readId = (value, label) => {
 	const id = typeof value === 'string' ? value.trim() : ''
-	if (!id) throw createError({ statusCode: 400, statusMessage: `${label} is required` })
+	if (!id) throw createError({ statusCode: 400, message: `${label} is required` })
 	if (!CLOUDFLARE_ID.test(id)) {
-		throw createError({ statusCode: 400, statusMessage: `${label} isn't a valid Cloudflare ID` })
+		throw createError({ statusCode: 400, message: `${label} isn't a valid Cloudflare ID` })
 	}
 	return id
 }

@@ -1,24 +1,25 @@
 const pending = new Map()
 
-// Which Cloudflare features the token can use in a zone, probed once per token and zone
-// and shared across pages. Concurrent callers share one in-flight request.
+// Which Cloudflare features the account's connection can use in a zone, probed once per
+// session and zone and shared across pages. Concurrent callers share one in-flight request.
 export function useCapabilities() {
-	const state = useState('cf-capabilities', () => ({ apiKey: null, zones: {} }))
+	// `access` is, per zone, whether it's shared with this account and at what levels.
+	const state = useState('cf-capabilities', () => ({ key: null, zones: {}, access: {} }))
 
-	const ensureKey = (apiKey) => {
-		if (state.value.apiKey === apiKey) return
-		state.value = { apiKey, zones: {} }
+	const ensureKey = (key) => {
+		if (state.value.key === key) return
+		state.value = { key, zones: {}, access: {} }
 		pending.clear()
 	}
 
 	// A request that fails outright is stored like a failed probe, so pages waiting on the
 	// check stop showing a skeleton and can offer to check again.
-	const request = (cacheKey, body, store) => {
+	const request = (cacheKey, key, body, store) => {
 		if (pending.has(cacheKey)) return pending.get(cacheKey)
-		const promise = $fetch('/api/capabilities', { method: 'POST', body })
+		const promise = $fetch('/api/capabilities', { method: 'POST', body, timeout: 90_000 })
 			.catch(() => null)
 			.then((data) => {
-				if (state.value?.apiKey !== body.apiKey) return null
+				if (state.value?.key !== key) return null
 				return store(data)
 			})
 			.finally(() => pending.delete(cacheKey))
@@ -28,12 +29,13 @@ export function useCapabilities() {
 
 	// A failed probe is stored as null so the zone counts as checked (nothing available)
 	// while the next load() retries it.
-	const loadZone = async (apiKey, zoneId, { force = false } = {}) => {
-		if (!apiKey || !zoneId) return null
-		ensureKey(apiKey)
+	const loadZone = async (key, zoneId, { force = false } = {}) => {
+		if (!key || !zoneId) return null
+		ensureKey(key)
 		if (!force && state.value.zones[zoneId]) return state.value.zones[zoneId]
-		return request(`zone:${zoneId}`, { apiKey, currZone: zoneId }, (data) => {
+		return request(`zone:${zoneId}`, key, { currZone: zoneId }, (data) => {
 			state.value.zones[zoneId] = data?.success ? data.result : null
+			state.value.access[zoneId] = data?.access || { shared: false }
 			return state.value.zones[zoneId]
 		})
 	}

@@ -1,4 +1,4 @@
-import { cfFetch } from './cfFetch'
+import { cfCommand } from './cfCommand'
 
 const SUPPORTED_STANDARD_RECORD_TYPES = new Set(['A', 'AAAA', 'CNAME', 'MX', 'TXT'])
 const MULTI_VALUE_RECORD_TYPES = new Set(['A', 'AAAA', 'MX', 'TXT'])
@@ -232,10 +232,11 @@ const failureEnvelope = (error) => ({
 // never passes for a complete one. Pages load a few at a time to stay clear of rate limits.
 export async function fetchAllDnsRecords({ apiKey, zoneId, cacheTtl = 15000, fresh = false }) {
 	const getPage = (page) =>
-		cfFetch({
+		cfCommand({
 			apiKey,
-			method: 'GET',
-			path: `/zones/${zoneId}/dns_records?per_page=${RECORDS_PER_PAGE}&page=${page}`,
+			command: 'dns records list',
+			zone: zoneId,
+			flags: { 'per-page': RECORDS_PER_PAGE, page },
 			cacheTtl,
 			fresh
 		}).catch(failureEnvelope)
