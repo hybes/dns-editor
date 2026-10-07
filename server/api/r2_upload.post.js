@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
 		const body = (await readRawBody(event, false)) || Buffer.alloc(0)
 		if (body.length > MAX_UPLOAD_BYTES) throw tooLarge()
 
-		const target = await findZoneBucket(apiKey, zoneId)
+		const target = await findZoneBucket(apiKey, zoneId, event.context.access)
 		if (target.error) return target.error
 
 		const { command, request } = await buildObjectRequest('r2 objects put', {

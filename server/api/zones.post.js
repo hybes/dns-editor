@@ -4,6 +4,7 @@ import { listZones } from '../utils/cfLists'
 import { cfCommand } from '../utils/cfCommand'
 import { connectionsWithTokens, tokenFor } from '../utils/connections'
 import { sharedZones } from '../utils/shares'
+import { withZoneBucket } from '../utils/zoneBuckets'
 
 const SHARED_TTL = 60_000
 
@@ -62,7 +63,7 @@ export default defineEventHandler(async (event) => {
 		})
 		const shared = await sharedList(userId, new Set(byId.keys()), Boolean(body.fresh))
 		if (connections.length && failures.length === connections.length && !shared.length) return lists[0]
-		const result = [...byId.values(), ...shared]
+		const result = [...byId.values(), ...shared].map(withZoneBucket)
 		return {
 			success: true,
 			errors: [],

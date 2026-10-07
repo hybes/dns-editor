@@ -26,7 +26,9 @@ export const describeConnection = (row) => ({
 })
 
 export const userConnections = (userId) =>
-	useDb().prepare(`select ${PUBLIC_FIELDS} from connections where user_id = ? order by id`).all(userId)
+	useDb()
+		.prepare(`select ${PUBLIC_FIELDS} from connections where user_id = ? order by priority desc, id desc`)
+		.all(userId)
 
 const tokenOf = (userId, connectionId) => {
 	const row = useDb()
@@ -49,7 +51,7 @@ export function addConnection(userId, { token, label, cfTokenId = null }) {
 		db.prepare(
 			"update connections set token_enc = ?, token_hint = ?, checked_at = datetime('now') where id = ?"
 		).run(encryptSecret(token), hintOf(token), existing.id)
-		forgetScope(userId)
+		preferConnection(userId, existing.id)
 		return existing.id
 	}
 	const { lastInsertRowid } = db
@@ -57,8 +59,19 @@ export function addConnection(userId, { token, label, cfTokenId = null }) {
 			"insert into connections (user_id, label, token_enc, token_hint, cf_token_id, checked_at) values (?, ?, ?, ?, ?, datetime('now'))"
 		)
 		.run(userId, label, encryptSecret(token), hintOf(token), cfTokenId)
-	forgetScope(userId)
+	preferConnection(userId, Number(lastInsertRowid))
 	return Number(lastInsertRowid)
+}
+
+// A new or explicitly selected connection wins wherever several can see the same resource.
+export function preferConnection(userId, connectionId) {
+	const { changes } = useDb()
+		.prepare(
+			'update connections set priority = (select coalesce(max(priority), 0) + 1 from connections where user_id = ?) where id = ? and user_id = ?'
+		)
+		.run(userId, connectionId, userId)
+	forgetScope(userId)
+	return changes > 0
 }
 
 export function renameConnection(userId, connectionId, label) {

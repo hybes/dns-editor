@@ -96,9 +96,7 @@
 							<code class="text-highlighted font-mono">{{ bucket }}</code> in {{ accountLabel }}, separate
 							from other zones.
 						</template>
-						<template v-else>
-							Each zone’s files are kept in an R2 bucket of their own, named after the zone.
-						</template>
+						<template v-else> Each zone’s files are kept in an R2 bucket of their own. </template>
 					</p>
 
 					<UAlert
@@ -163,7 +161,7 @@
 						v-else-if="bucketState.status === 'missing'"
 						class="border-default flex flex-col gap-3 border-y py-4 text-sm"
 					>
-						<p class="text-default">{{ zoneName }} doesn’t have a bucket yet.</p>
+						<p class="text-default">No bucket is connected to {{ zoneName }} yet.</p>
 						<p class="text-muted">
 							Creating it adds an empty bucket called
 							<code class="text-default font-mono">{{ bucket }}</code> to {{ accountLabel }}. It stays
@@ -181,10 +179,11 @@
 						<div class="flex flex-wrap items-center gap-2">
 							<UButton
 								v-if="canEdit"
-								:label="`Create bucket ${bucket}`"
+								label="Create bucket"
 								icon="i-lucide-plus"
 								size="sm"
 								:loading="bucketState.creating"
+								:disabled="legacy.linking"
 								@click="createBucket"
 							/>
 							<UButton
@@ -198,6 +197,44 @@
 								@click="loadBucket"
 							/>
 						</div>
+						<div v-if="legacy.bucket" class="border-default mt-2 flex flex-col gap-3 border-t pt-4">
+							<p class="text-default">
+								An older bucket called
+								<code class="font-mono break-all">{{ legacy.bucket }}</code> exists.
+							</p>
+							<p class="text-muted">
+								Older bucket names could be shared by different domains. Check its files before
+								connecting it here. Connecting keeps its files and public addresses as they are.
+							</p>
+							<ULink
+								:to="`https://dash.cloudflare.com/${zone.account.id}/r2/default/buckets/${legacy.bucket}`"
+								target="_blank"
+								class="text-primary self-start underline"
+								>Review the older bucket in Cloudflare</ULink
+							>
+							<UCheckbox
+								v-model="legacy.confirmed"
+								:label="`This bucket contains only files for ${zoneName}.`"
+							/>
+							<UAlert
+								v-if="legacy.error"
+								color="error"
+								variant="subtle"
+								role="alert"
+								title="Couldn’t connect the older bucket"
+								:description="legacy.error"
+							/>
+							<UButton
+								label="Connect older bucket"
+								color="neutral"
+								variant="outline"
+								class="self-start"
+								:disabled="!legacy.confirmed || bucketState.creating"
+								:loading="legacy.linking"
+								@click="adoptBucket"
+							/>
+						</div>
+						<p v-else-if="legacy.error" class="text-error" role="alert">{{ legacy.error }}</p>
 					</div>
 
 					<template v-else>
@@ -595,6 +632,8 @@ const route = useRoute()
 const router = useRouter()
 const notify = useNotify()
 const { exec } = useCfCommands()
+const { call } = useCfApi()
+const zonesApi = useZones()
 
 const {
 	zoneId,
@@ -618,7 +657,7 @@ const accountName = computed(() => zone.value?.account?.name || '')
 const accountLabel = computed(() => (accountName.value ? `the ${accountName.value} account` : 'the zone’s account'))
 const canUse = computed(() => can('r2'))
 const accessReason = computed(() => missingCapabilities.value.find((item) => item.key === 'r2')?.reason || '')
-const bucket = computed(() => bucketNameForZone(zoneName.value))
+const bucket = computed(() => zone.value?.filesBucket || bucketNameForZone(zoneId.value))
 
 useSeoMeta({ title: computed(() => (zoneName.value ? `Files · ${zoneName.value}` : 'Files')) })
 
@@ -686,6 +725,7 @@ const bucketState = reactive({
 	createError: ''
 })
 let bucketRequest = 0
+const legacy = reactive({ bucket: '', confirmed: false, linking: false, error: '' })
 
 const ready = computed(() => canUse.value && bucketState.status === 'ready' && bucketState.zone === zoneId.value)
 
@@ -716,12 +756,44 @@ const loadBucket = async () => {
 			zone: id,
 			message: describeError(error, fallback)
 		})
+		if (bucketState.status === 'missing' && !zoneAccess.value.shared && name === bucketNameForZone(id)) {
+			const oldName = legacyBucketNameForZone(zoneName.value)
+			try {
+				await exec('r2 buckets get', { accountOfZone: id, args: { 'bucket-name': oldName } })
+				if (request === bucketRequest) legacy.bucket = oldName
+			} catch (oldError) {
+				if (request === bucketRequest) {
+					legacy.bucket = ''
+					legacy.error = isMissingBucket(oldError)
+						? ''
+						: describeError(oldError, 'Couldn’t check for an older bucket.')
+				}
+			}
+		}
 	} finally {
 		if (request === bucketRequest) bucketState.loading = false
 	}
 	if (request === bucketRequest && bucketState.status === 'ready') {
 		loadListing()
 		publicAccess.value?.refresh()
+	}
+}
+
+const adoptBucket = async () => {
+	const id = zoneId.value
+	if (!legacy.confirmed || legacy.linking || zoneAccess.value.shared) return
+	legacy.linking = true
+	legacy.error = ''
+	try {
+		await call('r2_adopt_bucket', { currZone: id, confirm: true })
+		if (id !== zoneId.value) return
+		await Promise.all([loadZone({ force: true }), zonesApi.load({ force: true })])
+		if (id !== zoneId.value) return
+		notify.success('Older bucket connected', zoneName.value)
+	} catch (error) {
+		if (id === zoneId.value) legacy.error = describeError(error, 'Couldn’t connect the older bucket.')
+	} finally {
+		if (id === zoneId.value) legacy.linking = false
 	}
 }
 
@@ -1399,6 +1471,7 @@ const refreshAll = () => {
 // their way for it are dropped.
 const resetForZone = () => {
 	bucketRequest += 1
+	Object.assign(legacy, { bucket: '', confirmed: false, linking: false, error: '' })
 	Object.assign(bucketState, {
 		status: 'idle',
 		zone: '',

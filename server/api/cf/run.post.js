@@ -3,6 +3,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { buildCfRequest, describeCfRequest, requireCfCommand, sendCfRequest } from '../../utils/cfCommand'
 import { invalidateCfCache } from '../../utils/cfFetch'
 import { forgetRenewals } from '../../utils/renewals'
+import { refusal } from '../../utils/access'
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
 
@@ -52,6 +53,10 @@ export default defineEventHandler(async (event) => {
 			// Looking up a zone name or the token's account failed at Cloudflare.
 			if (error?.envelope) return error.envelope
 			throw error
+		}
+		if (event.context.access?.shared) {
+			const reason = refusal({ path: '/api/cf/run', command, request, shared: event.context.access })
+			if (reason) throw createError({ statusCode: 403, message: reason, data: { reason: 'not_shared' } })
 		}
 		const described = describeCfRequest(command, request)
 

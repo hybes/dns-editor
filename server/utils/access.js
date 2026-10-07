@@ -1,5 +1,5 @@
 import { allows } from '#shared/utils/access'
-import { bucketNameForZone } from '../../app/utils/zoneBucket'
+import { bucketForZone } from './zoneBuckets'
 
 // What a request on a shared zone needs: an area and an action (view, edit or delete), checked
 // against the levels the owner gave. Anything not listed here is for owners only, so a new route
@@ -58,29 +58,37 @@ const COMMANDS = [
 const sameName = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase()
 
 // [area, action] for a cf command on a shared zone, or null when it isn't allowed.
-function commandAccess(command, input, shared) {
+function commandAccess(command, request, shared) {
 	const rule = COMMANDS.find((item) => item.match.test(command.command))
 	if (!rule) return null
-	const onZone =
-		command.scope === 'zone' ||
-		(command.scope === 'accountOrZone' && input.target !== 'account' && Boolean(input.zone))
-	if (rule.zoneOnly && !onZone) return null
 	if (!rule.bucket && !rule.domain && !rule.accountRead && command.scope === 'account') return null
-	if (rule.bucket) {
-		const values = { ...(input.flags || {}), ...(input.args || {}) }
-		const bucket = values['bucket-name'] ?? input.body?.name
-		if (!sameName(bucket, bucketNameForZone(shared.zoneName))) return null
-		// A custom domain can only be connected on the zone itself.
-		if (command.command.includes('domains custom create') && input.body?.zoneId !== shared.zoneId) return null
+	// The middleware checks the command family first. The runner checks the built request
+	// again before returning a dry run or sending anything: flags and raw JSON resolve there.
+	if (request) {
+		if (request.zoneId && request.zoneId !== shared.zoneId) return null
+		if (rule.zoneOnly && request.zoneId !== shared.zoneId) return null
+		if (rule.bucket) {
+			const bucket = command.command === 'r2 buckets create' ? request.body?.name : request.pathParams.bucket_name
+			if (bucket !== bucketForZone(shared.zoneId, request.accountId)) return null
+			if (command.command === 'r2 buckets domains custom create' && request.body?.zoneId !== shared.zoneId)
+				return null
+		}
+		if (rule.domain && !sameName(request.pathParams.domain_name, shared.zoneName)) return null
 	}
-	if (rule.domain && !sameName(input.args?.['domain-name'], shared.zoneName)) return null
-	return [rule.area, rule.action || actionOf(command.method)]
+	let action = rule.action || actionOf(command.method)
+	const deletes = request?.body?.deletes
+	if (command.command === 'dns records batch' && deletes && (!Array.isArray(deletes) || deletes.length))
+		action = 'delete'
+	// Replacing a whole ruleset can remove rules even though the API uses PUT.
+	if (['rulesets account-rulesets update', 'rulesets account-rulesets phases update'].includes(command.command))
+		action = 'delete'
+	return [rule.area, action]
 }
 
 // Whether the shared zone's levels allow this request. Resolves to null when allowed, or the
 // sentence to refuse it with.
-export function refusal({ path, body, command, shared }) {
-	const need = path === '/api/cf/run' ? command && commandAccess(command, body || {}, shared) : ROUTES[path]
+export function refusal({ path, command, request, shared }) {
+	const need = path === '/api/cf/run' ? command && commandAccess(command, request, shared) : ROUTES[path]
 	if (!need)
 		return `${shared.owner} shares ${shared.zoneName} with you, but this isn’t something shared accounts can do.`
 	const [area, action] = need

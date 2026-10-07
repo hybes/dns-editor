@@ -238,7 +238,7 @@ const zoneBuckets = computed(() => {
 	const map = new Map()
 	for (const zone of zones.value) {
 		if (zone?.account?.id !== props.account) continue
-		const bucket = bucketNameForZone(zone.name)
+		const bucket = zone.filesBucket || bucketNameForZone(zone.id)
 		if (bucket) map.set(bucket, zone)
 	}
 	return map

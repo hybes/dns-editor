@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import { bucketNameForZone } from '../../app/utils/zoneBucket'
+import { bucketForZone } from './zoneBuckets'
 import { buildCfRequest, cfCommand, requireCfCommand } from './cfCommand'
 
 // The pieces the Files page's upload and download routes share. Those routes move a file's
@@ -34,11 +34,14 @@ export const readObjectKey = (value) => {
 
 // The zone's account and the bucket named after it, by the rule in app/utils/zoneBucket.js.
 // Resolves to { bucket, accountId, zoneName }, or { error } with Cloudflare's envelope.
-export async function findZoneBucket(apiKey, zoneId) {
+export async function findZoneBucket(apiKey, zoneId, access) {
+	if (access?.shared && zoneId !== access.zoneId) {
+		throw createError({ statusCode: 403, message: 'That domain isn’t shared with you.' })
+	}
 	const zone = await cfCommand({ apiKey, command: 'zones get', zone: zoneId, cacheTtl: ZONE_LOOKUP_TTL_MS })
 	if (!zone?.success) return { error: zone }
 	const accountId = zone.result?.account?.id || ''
-	const bucket = bucketNameForZone(zone.result?.name)
+	const bucket = bucketForZone(zoneId, accountId)
 	if (!accountId || !bucket) {
 		return {
 			error: {

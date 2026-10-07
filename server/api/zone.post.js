@@ -2,6 +2,7 @@ import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { cfCommand } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
+import { withZoneBucket } from '../utils/zoneBuckets'
 
 const CACHE_TTL = 15000
 
@@ -31,7 +32,7 @@ export default defineEventHandler(async (event) => {
 			? sslData.result
 			: { value: 'unknown', error: sslData?.errors?.[0]?.message || 'Cloudflare didn’t return the SSL setting' }
 
-		return data
+		return { ...data, result: withZoneBucket(data.result) }
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({

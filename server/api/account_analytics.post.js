@@ -224,11 +224,12 @@ export default defineEventHandler(async (event) => {
 		// the account) is only asked for when the token can't read the zone's own.
 		const candidates = [
 			{ scope: 'zone', tag: zoneId, subject: `for ${zoneName || 'this zone'}` },
-			accountId && {
-				scope: 'account',
-				tag: accountId,
-				subject: 'across this account, the only scope this token can read'
-			}
+			accountId &&
+				!event.context.access?.shared && {
+					scope: 'account',
+					tag: accountId,
+					subject: 'across this account, the only scope this token can read'
+				}
 		].filter(Boolean)
 
 		const buckets = bucketsFor(range)

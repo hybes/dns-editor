@@ -107,7 +107,8 @@ export default defineEventHandler(async (event) => {
 			const zone = await graphql(ZONE_ANALYTICS_QUERY, { zoneTag: zoneId })
 			const zoneSettings = zone?.data?.viewer?.zones?.[0]?.settings?.dnsAnalyticsAdaptiveGroups
 			if (zone && !zone.errors && zoneSettings?.enabled) return AVAILABLE
-			if (!accountId) return unavailable(reasonFrom(zone, 'DNS analytics unavailable'), fixableFrom(zone))
+			if (!accountId || event.context.access?.shared)
+				return unavailable(reasonFrom(zone, 'DNS analytics unavailable'), fixableFrom(zone))
 
 			const today = new Date()
 			const yesterday = new Date(today.getTime() - 86_400_000)

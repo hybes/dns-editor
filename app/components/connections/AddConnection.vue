@@ -239,7 +239,7 @@ const EXTRA_PERMISSIONS = Object.entries(SCOPE_LABELS).map(([scope, label]) => {
 	const rows = new Map()
 	for (const item of APP_PERMISSIONS.filter((entry) => entry.scope === scope && !entry.template)) {
 		const key = `${item.access}|${item.use}`
-		const name = item.match ? `${item.name} (search the list for it)` : item.name
+		const name = item.name
 		if (rows.has(key)) rows.get(key).names.push(name)
 		else rows.set(key, { names: [name], access: item.access, use: item.use })
 	}

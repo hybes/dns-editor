@@ -61,7 +61,16 @@ const MIGRATIONS = [
 		price_currency text,
 		primary key (share_id, zone_id)
 	);
-	create index share_zones_zone on share_zones(zone_id);`
+	create index share_zones_zone on share_zones(zone_id);`,
+	`alter table connections add column priority integer not null default 0;
+	update connections set priority = id;`,
+	// Older bucket names can collide. An owner must associate one with exactly one zone.
+	`create table zone_buckets (
+		zone_id text primary key,
+		account_id text not null,
+		bucket_name text not null,
+		unique (account_id, bucket_name)
+	);`
 ]
 
 let db = null

@@ -7,6 +7,16 @@ import { APP_PERMISSIONS } from '#shared/utils/cloudflare'
 
 const SCOPES = { zone: 'com.cloudflare.api.account.zone', account: 'com.cloudflare.api.account' }
 
+// The dashboard labels differ from the permission-groups API for these products.
+const API_NAMES = {
+	'Single Redirect': 'dynamic url redirects',
+	'Origin Rules': 'origin',
+	'Config Rules': 'config settings',
+	'Transform Rules': 'zone transform rules',
+	'Cache Rules': 'cache settings',
+	'Custom Error Rules': 'custom errors'
+}
+
 // "DNS Write" → { family: 'dns', access: 'edit' }. The API says Write where the form says Edit.
 const splitName = (name) => {
 	const match = /^(.*\S)\s+(Read|Write|Edit)$/i.exec(String(name || '').trim())
@@ -15,7 +25,7 @@ const splitName = (name) => {
 }
 
 const fits = (wanted, group, parts) =>
-	(wanted.match ? wanted.match.test(parts.family) : parts.family === wanted.name.toLowerCase()) &&
+	[wanted.name.toLowerCase(), API_NAMES[wanted.name]].includes(parts.family) &&
 	(group.scopes || []).includes(SCOPES[wanted.scope])
 
 // Resolves to { picked: [{ id, name, scope, use }], missing: [{ name, access, use }] }. An Edit

@@ -71,7 +71,8 @@ export default defineEventHandler(async (event) => {
 	if (NO_TOKEN.has(path) || /^\/api\/(connections|shares)\//.test(path)) return
 
 	let body = null
-	if (/json/i.test(getRequestHeader(event, 'content-type') || '')) {
+	// Upload bodies are file bytes, even when the file itself is JSON. Their scope is in the URL.
+	if (path !== '/api/r2_upload' && /json/i.test(getRequestHeader(event, 'content-type') || '')) {
 		const parsed = await readBody(event)
 		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed
 	}
@@ -79,15 +80,17 @@ export default defineEventHandler(async (event) => {
 	const pick = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
 	// Registrar commands name the domain rather than the zone.
 	const zone =
-		pick(source.currZone) ||
-		pick(source.zone) ||
-		pick(source.accountOfZone) ||
-		(path === '/api/cf/run' ? pick(body?.args?.['domain-name']) : '')
+		path === '/api/r2_upload'
+			? pick(source.zone)
+			: pick(source.currZone) ||
+				pick(source.zone) ||
+				pick(source.accountOfZone) ||
+				(path === '/api/cf/run' ? pick(body?.args?.['domain-name']) : '')
 
 	const shared = zone && hasShares(user.id) ? sharedZone(user.id, zone) : null
 	if (shared && !(await ownsZone(user.id, zone))) {
 		const command = path === '/api/cf/run' ? await findCfCommand(body?.command) : null
-		const reason = refusal({ path, body, command, shared })
+		const reason = refusal({ path, command, shared })
 		if (reason) throw createError({ statusCode: 403, message: reason, data: { reason: 'not_shared' } })
 		const { token } = await tokenFor(shared.ownerId, { zone: shared.zoneId })
 		if (body) {

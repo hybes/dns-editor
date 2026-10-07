@@ -5,8 +5,8 @@ export const API_TOKENS_URL = 'https://dash.cloudflare.com/profile/api-tokens'
 // Every permission DNS Manager's pages use, named as Cloudflare's token form shows them (its API
 // calls Edit "Write"). The sign-in page's link fills in the ones with a `template` key, the only
 // keys Cloudflare's template link documents, and lists the rest to add by hand; the automatic
-// set-up (server/api/token_setup.post.js) asks for all of them. `match` finds a permission whose
-// exact name Cloudflare doesn't document.
+// set-up (server/api/token_setup.post.js) asks for all of them. tokenSetup.js maps the dashboard
+// labels that differ from their API names.
 // https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
 export const APP_PERMISSIONS = [
 	{ scope: 'zone', name: 'Zone', access: 'Read', use: 'Listing zones', template: 'zone' },
@@ -41,7 +41,6 @@ export const APP_PERMISSIONS = [
 	{
 		scope: 'account',
 		name: 'Registrar',
-		match: /registrar/i,
 		access: 'Edit',
 		use: 'Registrar and its prices in Domain Search'
 	}

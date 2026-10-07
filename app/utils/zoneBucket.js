@@ -1,7 +1,7 @@
-// The R2 bucket that holds a zone's files: the zone name with dots as hyphens, so example.com
-// uses the bucket example-com. R2 bucket names are 3 to 63 lower-case letters, digits and
-// hyphens, starting and ending with a letter or digit; a longer name is shortened and ends with
-// a short hash of the full name, so two long zones never share a bucket.
+// Zone IDs give every new bucket a unique name, including domains whose names slug alike.
+export const bucketNameForZone = (zoneId) => (/^[a-f0-9]{32}$/i.test(zoneId || '') ? `dm-${zoneId.toLowerCase()}` : '')
+
+// Kept only to find older buckets. Owners must link them to one zone before Files uses them.
 
 const MAX_LENGTH = 63
 const HASH_LENGTH = 8
@@ -16,7 +16,7 @@ const shortHash = (text) => {
 	return hash.toString(36).padStart(HASH_LENGTH, '0').slice(-HASH_LENGTH)
 }
 
-export const bucketNameForZone = (zoneName) => {
+export const legacyBucketNameForZone = (zoneName) => {
 	const name = String(zoneName || '')
 		.trim()
 		.toLowerCase()

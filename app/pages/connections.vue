@@ -18,9 +18,13 @@
 
 				<section v-if="connections.length" aria-labelledby="connections-list" class="flex flex-col gap-3">
 					<h2 id="connections-list" class="text-highlighted font-semibold">Your connections</h2>
+					<p v-if="connections.length > 1" class="text-muted text-sm">
+						When connections cover the same account or domain, the first one below is used. New connections
+						go first.
+					</p>
 					<ul class="divide-default border-default divide-y border-y">
 						<li
-							v-for="connection in connections"
+							v-for="(connection, index) in connections"
 							:key="connection.id"
 							class="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:gap-4"
 						>
@@ -48,7 +52,17 @@
 									{{ formatDate(`${connection.createdAt}Z`) }}
 								</p>
 							</div>
-							<div v-if="renaming !== connection.id" class="flex shrink-0 gap-1.5">
+							<div v-if="renaming !== connection.id" class="flex shrink-0 flex-wrap gap-1.5">
+								<UButton
+									v-if="connections.length > 1"
+									:label="index === 0 ? 'Used first' : 'Use first'"
+									color="neutral"
+									variant="outline"
+									size="sm"
+									:disabled="index === 0 || preferring !== null"
+									:loading="preferring === connection.id"
+									@click="prefer(connection)"
+								/>
 								<UButton
 									label="Rename"
 									icon="i-lucide-pencil"
@@ -117,6 +131,20 @@ const onAdded = async () => {
 	const first = !connections.value.length
 	await refresh()
 	if (first) await navigateTo('/zones')
+}
+
+const preferring = ref(null)
+const prefer = async (connection) => {
+	preferring.value = connection.id
+	try {
+		await call('connections/prefer', { id: connection.id })
+		await refresh()
+		notify.success('Connection used first', connection.label)
+	} catch (error) {
+		notify.error('Couldn’t change the connection order', error)
+	} finally {
+		preferring.value = null
+	}
 }
 
 const renaming = ref(null)

@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
 		const zoneId = readId(body.currZone, 'Zone ID')
 		const key = readObjectKey(body.key)
 
-		const target = await findZoneBucket(apiKey, zoneId)
+		const target = await findZoneBucket(apiKey, zoneId, event.context.access)
 		if (target.error) return failure(event, target.error)
 
 		const { request } = await buildObjectRequest('r2 objects get', {

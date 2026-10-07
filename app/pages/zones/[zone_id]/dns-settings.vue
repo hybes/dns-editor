@@ -85,6 +85,7 @@
 
 					<form
 						v-else-if="settings"
+						id="zone-dns-settings-form"
 						ref="formRoot"
 						class="flex flex-col gap-10"
 						novalidate
@@ -339,45 +340,6 @@
 							@apply="applyJson"
 							@dirty="onJsonDirty"
 						/>
-
-						<div
-							v-if="canEdit"
-							class="bg-default border-default sticky bottom-0 z-10 flex flex-col gap-3 border-t py-3"
-						>
-							<UAlert
-								v-if="saveError"
-								role="alert"
-								color="error"
-								variant="subtle"
-								icon="i-lucide-circle-alert"
-								:title="
-									saveError === JSON_UNAPPLIED
-										? 'Your JSON edits haven’t been applied'
-										: 'Cloudflare didn’t save the DNS settings'
-								"
-								:description="saveError"
-							/>
-							<div class="flex flex-wrap items-center justify-between gap-3">
-								<p class="text-muted text-sm" aria-live="polite">
-									{{ dirty ? 'You have unsaved changes.' : 'No unsaved changes.' }}
-								</p>
-								<div class="flex flex-wrap gap-2">
-									<UButton
-										label="Discard changes"
-										color="neutral"
-										variant="ghost"
-										:disabled="!dirty || saving"
-										@click="discardChanges"
-									/>
-									<UButton
-										type="submit"
-										label="Save DNS settings"
-										:loading="saving && !zoneModeOpen"
-										:disabled="!dirty || (saving && zoneModeOpen)"
-									/>
-								</div>
-							</div>
-						</div>
 					</form>
 				</AccountFeatureGate>
 			</div>
@@ -443,6 +405,49 @@
 					</div>
 				</template>
 			</UModal>
+		</template>
+		<template #footer>
+			<div
+				v-if="canUse && settings && canEdit"
+				class="bg-default border-default shrink-0 border-t px-4 py-3 sm:px-6"
+			>
+				<div class="mx-auto flex w-full max-w-3xl flex-col gap-3">
+					<UAlert
+						v-if="saveError"
+						role="alert"
+						color="error"
+						variant="subtle"
+						icon="i-lucide-circle-alert"
+						:title="
+							saveError === JSON_UNAPPLIED
+								? 'Your JSON edits haven’t been applied'
+								: 'Cloudflare didn’t save the DNS settings'
+						"
+						:description="saveError"
+					/>
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<p class="text-muted text-sm" aria-live="polite">
+							{{ dirty ? 'You have unsaved changes.' : 'No unsaved changes.' }}
+						</p>
+						<div class="flex flex-wrap gap-2">
+							<UButton
+								label="Discard changes"
+								color="neutral"
+								variant="ghost"
+								:disabled="!dirty || saving"
+								@click="discardChanges"
+							/>
+							<UButton
+								type="submit"
+								form="zone-dns-settings-form"
+								label="Save DNS settings"
+								:loading="saving && !zoneModeOpen"
+								:disabled="!dirty || (saving && zoneModeOpen)"
+							/>
+						</div>
+					</div>
+				</div>
+			</div>
 		</template>
 	</UDashboardPanel>
 </template>

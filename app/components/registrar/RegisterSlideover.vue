@@ -1356,7 +1356,9 @@ const submit = async () => {
 		emit('registered', { domain: quote.domain, status: submitted.value, pricing: quote.pricing })
 	} catch (error) {
 		const status = error?.statusCode ?? error?.data?.statusCode
-		submitError.value = describeError(error, 'Cloudflare didn’t register the domain')
+		submitError.value = isPermissionError(error)
+			? 'This connection cannot register domains in the selected account. It needs Registrar Edit. Check the token’s permissions and which connection is used first on the Cloudflare connections page.'
+			: describeError(error, 'Cloudflare didn’t register the domain')
 		if (status === 409) {
 			// The re-check found a change. Show Cloudflare's current answer so it can be reviewed.
 			const fresh = error?.data?.data?.check
