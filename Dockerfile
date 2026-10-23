@@ -4,7 +4,7 @@
 # production server (node .output/server/index.mjs, not the legacy `nuxt start`).
 
 # ---- Build stage ----
-FROM node:24-slim AS build
+FROM node:24.22.1-slim AS build
 WORKDIR /app
 
 # Copy source first so the `nuxt prepare` postinstall has nuxt.config + app present.
@@ -16,7 +16,7 @@ RUN npm ci && npm run build
 
 # ---- Runtime stage ----
 # Only the self-contained .output bundle is needed at runtime — no node_modules.
-FROM node:24-slim AS runtime
+FROM node:24.22.1-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
