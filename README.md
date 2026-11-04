@@ -147,7 +147,15 @@ Theme tokens live in [`app/assets/css/main.css`](app/assets/css/main.css), while
 
 ## Error monitoring
 
-Browser and Nitro server errors and logs go to our self-hosted [GlitchTip](https://error.cnnct.uk), under `connect-dorset / dns-editor`, using the standard Nuxt Sentry SDK. Production uses the project's public DSN by default. Override `SENTRY_DSN` for the server and `NUXT_PUBLIC_SENTRY_DSN` for the browser at runtime. Local development sends nothing unless its DSN is explicitly set; tests disable monitoring. Nothing waits on GlitchTip, so the app and the build carry on if it's unreachable. See [`.env.example`](.env.example).
+Browser and Nitro server errors and logs go to our self-hosted [GlitchTip](https://error.cnnct.uk), under `connect-dorset / dns-editor`, using the standard Nuxt Sentry SDK. The project's public DSN is the default everywhere; override `SENTRY_DSN` for the server and `NUXT_PUBLIC_SENTRY_DSN` for the browser at runtime. Nothing waits on GlitchTip, so the app and the build carry on if it's unreachable. See [`.env.example`](.env.example).
+
+**When it reports.** Only the real deployment reports. Setting a DSN doesn't turn it on anywhere else.
+
+- The server reports only when Coolify runs it, which it detects from `COOLIFY_FQDN`, `COOLIFY_URL` or `SOURCE_COMMIT` (Coolify sets these in every container). `npm run dev`, `npm run start` or `nuxt preview` after a local build, a local `docker run` and the tests send nothing.
+- The browser reports only when the page isn't on a local address: `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, `*.localhost`, `*.local`, `*.test`, private IPs (`10.x`, `172.16–31.x`, `192.168.x`, link-local) and LAN names with no dot.
+- Even if the SDK starts, events, transactions and logs from a page or request on one of those addresses are dropped. This includes errors from the container's own health check on `127.0.0.1`.
+- The environment is `production` on the deployment and `development` anywhere else. Set `SENTRY_ENVIRONMENT` (server) and `NUXT_PUBLIC_SENTRY_ENVIRONMENT` (browser) to name another, such as `preview` in Coolify's preview deployment variables.
+- To test GlitchTip from your machine on purpose, start the server with `SENTRY_FORCE=1` and `NUXT_PUBLIC_SENTRY_FORCE=1`. Forced events are tagged `development` and skip the local-address filter. Tests stay off even when forced.
 
 **Issues.** Uncaught errors, and every 5xx an API route returns, become issues with their stack, the original error as the cause, the request (URL, query, headers and body), breadcrumbs and the signed-in account (id and username). They're tagged `application: dns-editor`, `service: dns-editor` and `runtime: browser` or `server`. Errors are sampled at 100%; production traces at 1%, with no tracing in development. Release-health sessions, replay, profiling, metrics and client reports stay off.
 
@@ -165,7 +173,7 @@ Any other `console.warn` and `console.error` output also reaches the log feed.
 
 Source maps upload only when `SENTRY_AUTH_TOKEN` is provided at build time. In Coolify on `host.cnnct.uk`, add it as a **build-time variable** for the Dockerfile build pack; the build stage reads it through `ARG SENTRY_AUTH_TOKEN`, and the runtime image contains only the built output. For a local container build, pass `--build-arg SENTRY_AUTH_TOKEN`. Uploads target `https://error.cnnct.uk/`, organisation `connect-dorset`, project `dns-editor`; `SENTRY_URL` can override the build endpoint for local upload tests. Upload failures warn and let the build finish. Generated maps are deleted, including after upload failures, and are never served publicly. Commit association and deploy records are disabled.
 
-No hosting changes are needed. `SENTRY_HOST_NAME` sets the Host shown for the server's logs if the container's hostname isn't helpful. `SENTRY_DISABLED=true` and `NUXT_PUBLIC_SENTRY_DISABLED=true` disable the server and browser respectively. Pushing to `main` still triggers Coolify's usual deployment for `dns.brth.dev` and `dns.brth.uk`.
+No hosting changes are needed: Coolify already sets the variables the server checks. `SENTRY_HOST_NAME` sets the Host shown for the server's logs if the container's hostname isn't helpful. `SENTRY_DISABLED=true` and `NUXT_PUBLIC_SENTRY_DISABLED=true` disable the server and browser respectively. Pushing to `main` still triggers Coolify's usual deployment for `dns.brth.dev` and `dns.brth.uk`.
 
 ## Privacy and indexing
 

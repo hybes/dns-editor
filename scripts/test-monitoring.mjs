@@ -8,14 +8,19 @@ import {
 	collectsRequestBody,
 	consoleRunFacts,
 	DEFAULT_SENTRY_DSN,
+	browserSentrySettings,
 	getSentryDsn,
+	isDeployedServer,
+	isLocalHostname,
+	isLocalUrl,
 	isSentryTestRuntime,
 	logAttributesFor,
 	sanitizeSentryEvent,
 	sanitizeSentrySpan,
 	scrub,
 	scrubString,
-	sentryOptions
+	sentryOptions,
+	serverSentrySettings
 } from '../shared/utils/sentry.js'
 
 // Secrets that must never reach GlitchTip, and ordinary data that must.
@@ -66,10 +71,11 @@ const errorEvent = () => ({
 	}
 })
 
-test('DSNs default only in production, with separate browser and server overrides', () => {
-	assert.equal(getSentryDsn({ NODE_ENV: 'production' }), DEFAULT_SENTRY_DSN)
-	assert.equal(getSentryDsn({ NODE_ENV: 'production' }, 'browser'), DEFAULT_SENTRY_DSN)
-	for (const NODE_ENV of ['development', 'test', undefined]) assert.equal(getSentryDsn({ NODE_ENV }), '')
+test('the DSN is always the project default unless overridden, separately for browser and server', () => {
+	for (const NODE_ENV of ['production', 'development', 'test', undefined]) {
+		assert.equal(getSentryDsn({ NODE_ENV }), DEFAULT_SENTRY_DSN)
+		assert.equal(getSentryDsn({ NODE_ENV }, 'browser'), DEFAULT_SENTRY_DSN)
+	}
 	const env = { NODE_ENV: 'development', SENTRY_DSN: ' server ', NUXT_PUBLIC_SENTRY_DSN: ' browser ' }
 	assert.equal(getSentryDsn(env), 'server')
 	assert.equal(getSentryDsn(env, 'browser'), 'browser')
@@ -78,6 +84,157 @@ test('DSNs default only in production, with separate browser and server override
 		assert.equal(isSentryTestRuntime(env), true)
 	}
 	assert.equal(isSentryTestRuntime({ NODE_ENV: 'production' }), false)
+})
+
+// What Sentry.init is given on the server, after sentryOptions.
+const serverInit = (env) => sentryOptions({ ...serverSentrySettings(env), runtime: 'server', host: 'abc123' })
+const browserInit = (config, hostname) =>
+	sentryOptions({
+		...browserSentrySettings({ sentryDsn: DEFAULT_SENTRY_DSN, ...config }, hostname),
+		runtime: 'browser'
+	})
+
+test('the server reports only from a Coolify deployment, as production, unless forced', () => {
+	// npm run dev, a local build (npm run start, nuxt preview) and a local docker run.
+	for (const env of [{ NODE_ENV: 'development' }, { NODE_ENV: 'production' }, {}, { COOLIFY_URL: ' ' }]) {
+		const options = serverInit(env)
+		assert.equal(options.enabled, false, JSON.stringify(env))
+		assert.equal(options.environment, 'development')
+	}
+	// Coolify sets these in every container it runs.
+	for (const signal of [
+		{ COOLIFY_FQDN: 'dns.brth.uk,dns.brth.dev' },
+		{ COOLIFY_URL: 'https://dns.brth.uk' },
+		{ SOURCE_COMMIT: '06e7519' }
+	]) {
+		const options = serverInit({ NODE_ENV: 'production', ...signal })
+		assert.equal(options.enabled, true, JSON.stringify(signal))
+		assert.equal(options.environment, 'production')
+		assert.equal(options.dsn, DEFAULT_SENTRY_DSN)
+		assert.equal(options.tracesSampleRate, 0.01)
+		assert.equal(options.enableLogs, true)
+	}
+	const deployed = { NODE_ENV: 'production', COOLIFY_URL: 'https://dns.brth.uk' }
+	assert.equal(serverInit({ ...deployed, SENTRY_ENVIRONMENT: 'preview' }).environment, 'preview')
+	assert.equal(serverInit({ ...deployed, SENTRY_DISABLED: 'true' }).enabled, false)
+	assert.equal(serverInit({ ...deployed, NODE_ENV: 'test' }).enabled, false)
+	// A DSN alone never turns it on; SENTRY_FORCE does, tagged development.
+	assert.equal(serverInit({ SENTRY_DSN: DEFAULT_SENTRY_DSN }).enabled, false)
+	for (const SENTRY_FORCE of ['1', 'true']) {
+		const forced = serverInit({ NODE_ENV: 'development', SENTRY_FORCE })
+		assert.equal(forced.enabled, true)
+		assert.equal(forced.environment, 'development')
+		assert.equal(forced.tracesSampleRate, 0)
+	}
+	assert.equal(serverInit({ NODE_ENV: 'test', SENTRY_FORCE: '1' }).enabled, false)
+	assert.equal(isDeployedServer({ COOLIFY_FQDN: 'dns.brth.uk' }), true)
+	assert.equal(isDeployedServer({ VERCEL: '1', CF_PAGES: '1' }), false)
+})
+
+test('the browser reports only from a real address, as production, unless forced', () => {
+	for (const hostname of ['dns.brth.uk', 'dns.brth.dev', '93.184.216.34']) {
+		const options = browserInit({}, hostname)
+		assert.equal(options.enabled, true, hostname)
+		assert.equal(options.environment, 'production')
+	}
+	for (const hostname of ['localhost', '127.0.0.1', '[::1]', '0.0.0.0', '192.168.1.20', 'macbook', '', undefined]) {
+		const options = browserInit({}, hostname)
+		assert.equal(options.enabled, false, String(hostname))
+		assert.equal(options.environment, 'development')
+	}
+	assert.equal(browserInit({ sentryEnvironment: 'preview' }, 'pr-4.dns.brth.dev').environment, 'preview')
+	assert.equal(browserInit({ sentryDisabled: true }, 'dns.brth.uk').enabled, false)
+	assert.equal(browserInit({ sentryDisabled: 'true' }, 'dns.brth.uk').enabled, false)
+	for (const sentryForce of [true, 1, '1', 'true']) {
+		const forced = browserInit({ sentryForce }, 'localhost')
+		assert.equal(forced.enabled, true, String(sentryForce))
+		assert.equal(forced.environment, 'development')
+	}
+})
+
+test('local addresses are recognised, public ones are not', () => {
+	const local = [
+		'localhost',
+		'LOCALHOST',
+		'app.localhost',
+		'127.0.0.1',
+		'127.1.2.3',
+		'::1',
+		'[::1]',
+		'::ffff:127.0.0.1',
+		'0.0.0.0',
+		'10.0.0.5',
+		'172.16.0.1',
+		'172.31.255.255',
+		'192.168.0.10',
+		'169.254.1.1',
+		'fd12:3456::1',
+		'fe80::1',
+		'macbook.local',
+		'dns-editor.test',
+		'dns-editor',
+		'nas'
+	]
+	for (const host of local) assert.equal(isLocalHostname(host), true, host)
+	const remote = [
+		'dns.brth.uk',
+		'dns.brth.dev',
+		'error.cnnct.uk',
+		'8.8.8.8',
+		'172.32.0.1',
+		'172.15.0.1',
+		'2606:4700::1111'
+	]
+	for (const host of remote) assert.equal(isLocalHostname(host), false, host)
+	assert.equal(isLocalUrl('http://localhost:3000/zones'), true)
+	assert.equal(isLocalUrl('http://192.168.1.4:3000/'), true)
+	assert.equal(isLocalUrl('https://dns.brth.uk/zones'), false)
+	assert.equal(isLocalUrl('/api/records'), false)
+	assert.equal(isLocalUrl(undefined), false)
+})
+
+test('events, transactions and logs from local addresses are dropped even if the SDK started', () => {
+	const options = serverInit({ NODE_ENV: 'production', COOLIFY_URL: 'https://dns.brth.uk' })
+	const at = (url) => ({ ...errorEvent(), request: { ...errorEvent().request, url } })
+	for (const url of ['http://localhost:3000/api/records', 'http://127.0.0.1:3000/api/health', 'http://10.0.1.4/']) {
+		assert.equal(options.beforeSend(at(url)), null, url)
+		assert.equal(options.beforeSendTransaction({ ...at(url), type: 'transaction' }), null, url)
+	}
+	assert.equal(
+		options.beforeSendTransaction({
+			type: 'transaction',
+			contexts: { trace: { data: { 'url.full': 'http://localhost:3000/' } } }
+		}),
+		null
+	)
+	assert.notEqual(options.beforeSend(at('https://dns.brth.uk/api/records')), null)
+	assert.notEqual(options.beforeSend({ message: 'no request', tags: {} }), null)
+	const line = (attributes) => ({ level: 'warn', message: 'x', attributes })
+	assert.equal(options.beforeSendLog(line({ 'url.full': 'http://localhost:3000/zones' })), null)
+	assert.equal(options.beforeSendLog(line({ url: { value: 'http://127.0.0.1/', type: 'string' } })), null)
+	// The server's own name is a container name with no dot; it never counts as a local address.
+	const kept = options.beforeSendLog(line({ 'server.address': 'abc123', 'host.name': 'abc123', path: '/zones' }))
+	assert.equal(kept.attributes['host.name'], 'abc123')
+	// Forced on purpose, local events go through.
+	const forced = serverInit({ SENTRY_FORCE: '1' })
+	assert.notEqual(forced.beforeSend(at('http://localhost:3000/api/records')), null)
+	assert.notEqual(forced.beforeSendLog(line({ 'url.full': 'http://localhost:3000/' })), null)
+})
+
+test('a browser page on a local address sends nothing, whatever the event says', () => {
+	const options = browserInit({ sentryForce: '1' }, 'dns.brth.uk')
+	const unforced = browserInit({}, 'dns.brth.uk')
+	const original = Object.getOwnPropertyDescriptor(globalThis, 'location')
+	Object.defineProperty(globalThis, 'location', { value: { hostname: 'localhost' }, configurable: true })
+	try {
+		assert.equal(unforced.beforeSend(errorEvent()), null)
+		assert.equal(unforced.beforeSendLog({ level: 'warn', message: 'x', attributes: {} }), null)
+		assert.notEqual(options.beforeSend(errorEvent()), null)
+	} finally {
+		if (original) Object.defineProperty(globalThis, 'location', original)
+		else delete globalThis.location
+	}
+	assert.notEqual(unforced.beforeSend(errorEvent()), null)
 })
 
 test('options send logs, keep unsupported features off and sample traces lightly', () => {
@@ -509,6 +666,8 @@ test('the installed SDK never reads a Console request body', async () => {
 			environment: 'production',
 			runtime: 'server',
 			host: 'web-1',
+			// The test server listens on 127.0.0.1, which the local-address filter would drop.
+			force: true,
 			http: Sentry.httpIntegration({ ignoreRequestBody: (url) => !collectsRequestBody(url) })
 		}),
 		transport: () => ({
