@@ -13,6 +13,8 @@ Sentry.init({
 		...serverSentrySettings(),
 		runtime: 'server',
 		host,
+		// The full URL (with the Host header) of the request a log line is written during.
+		requestUrl: () => Sentry.getIsolationScope().getScopeData().sdkProcessingMetadata?.normalizedRequest?.url,
 		consoleLogs: Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] }),
 		// Request bodies are read only for routes that carry no credentials.
 		http: Sentry.httpIntegration({ ignoreRequestBody: (url) => !collectsRequestBody(url) })

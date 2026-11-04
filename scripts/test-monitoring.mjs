@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createServer } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
 import { test } from 'node:test'
 import * as Sentry from '@sentry/nuxt'
 import { log, logText, logValue } from '../shared/utils/log.js'
@@ -186,6 +186,10 @@ test('local addresses are recognised, public ones are not', () => {
 		'2606:4700::1111'
 	]
 	for (const host of remote) assert.equal(isLocalHostname(host), false, host)
+	// URL parsing writes IPv4-mapped addresses in hex: [::ffff:127.0.0.1] becomes [::ffff:7f00:1].
+	for (const url of ['http://[::ffff:127.0.0.1]:3000/', 'http://[::ffff:192.168.0.1]/', 'http://[0:0:0:0:0:0:0:1]/'])
+		assert.equal(isLocalUrl(url), true, url)
+	assert.equal(isLocalUrl('http://[::ffff:8.8.8.8]/'), false)
 	assert.equal(isLocalUrl('http://localhost:3000/zones'), true)
 	assert.equal(isLocalUrl('http://192.168.1.4:3000/'), true)
 	assert.equal(isLocalUrl('https://dns.brth.uk/zones'), false)
@@ -215,6 +219,18 @@ test('events, transactions and logs from local addresses are dropped even if the
 	// The server's own name is a container name with no dot; it never counts as a local address.
 	const kept = options.beforeSendLog(line({ 'server.address': 'abc123', 'host.name': 'abc123', path: '/zones' }))
 	assert.equal(kept.attributes['host.name'], 'abc123')
+	// Server log lines carry the path only, so the request they were written during decides.
+	const during = (url) => sentryOptions({ ...serverInit({ COOLIFY_URL: 'x' }), requestUrl: () => url })
+	assert.equal(during('http://127.0.0.1:3000/api/health').beforeSendLog(line({ path: '/api/health' })), null)
+	assert.notEqual(during('https://dns.brth.uk/api/records').beforeSendLog(line({ path: '/api/records' })), null)
+	assert.notEqual(during(undefined).beforeSendLog(line({})), null)
+	const broken = sentryOptions({
+		...serverInit({ COOLIFY_URL: 'x' }),
+		requestUrl: () => {
+			throw new Error('no scope')
+		}
+	})
+	assert.notEqual(broken.beforeSendLog(line({})), null)
 	// Forced on purpose, local events go through.
 	const forced = serverInit({ SENTRY_FORCE: '1' })
 	assert.notEqual(forced.beforeSend(at('http://localhost:3000/api/records')), null)
@@ -718,4 +734,56 @@ test('the installed SDK never reads a Console request body', async () => {
 	for (const event of byPath('/api/cf/run')) assert.equal(event.request.data, undefined)
 	// The allowlisted route still has its body, which shows capture itself is working.
 	assert.match(JSON.stringify(byPath('/api/create_record')[0].request.data), /www\.example\.com/)
+})
+
+test('the installed SDK drops log lines written during a request to a local address', async () => {
+	const envelopes = []
+	Sentry.init({
+		...sentryOptions({
+			...serverSentrySettings({ NODE_ENV: 'production', COOLIFY_URL: 'https://dns.brth.uk' }),
+			runtime: 'server',
+			host: 'web-1',
+			requestUrl: () => Sentry.getIsolationScope().getScopeData().sdkProcessingMetadata?.normalizedRequest?.url,
+			http: Sentry.httpIntegration({ ignoreRequestBody: (url) => !collectsRequestBody(url) })
+		}),
+		transport: () => ({
+			send: async (envelope) => {
+				envelopes.push(envelope)
+				return { statusCode: 200 }
+			},
+			flush: async () => true
+		})
+	})
+	const server = createServer((request, response) => {
+		log.error('api', `GET ${request.url} failed 500 for ${request.headers.host}`)
+		response.end('{}')
+	})
+	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+	const { port } = server.address()
+	// As a health check sends it, and as Coolify's proxy forwards a visitor's request.
+	const get = (host) =>
+		new Promise((resolve, reject) =>
+			httpRequest({ host: '127.0.0.1', port, path: '/api/health', headers: { host } }, (response) =>
+				response.resume().on('end', resolve)
+			)
+				.on('error', reject)
+				.end()
+		)
+	try {
+		await get(`127.0.0.1:${port}`)
+		await get('dns.brth.uk')
+	} finally {
+		await new Promise((resolve) => server.close(resolve))
+	}
+	assert.equal(await Sentry.flush(2000), true)
+	await Sentry.close(2000)
+	const logs = envelopes
+		.flatMap(([, items]) => items)
+		.filter(([header]) => header.type === 'log')
+		.flatMap(([, payload]) => payload.items)
+	assert.deepEqual(
+		logs.map((item) => item.body),
+		['api: GET /api/health failed 500 for dns.brth.uk']
+	)
+	assert.equal(logs[0].attributes['sentry.environment'].value, 'production')
 })

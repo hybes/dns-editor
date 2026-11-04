@@ -42,8 +42,13 @@ export function isLocalHostname(hostname) {
 		// IPv6: loopback, unspecified, unique-local (fc00::/7) and link-local (fe80::/10).
 		if (host === '::1' || host === '::' || /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host))
 			return true
+		// IPv4-mapped, which URL parsing writes in hex: [::ffff:127.0.0.1] becomes [::ffff:7f00:1].
 		const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-		return mapped ? isLocalHostname(mapped[1]) : false
+		if (mapped) return isLocalHostname(mapped[1])
+		const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+		if (!hex) return false
+		const [high, low] = [parseInt(hex[1], 16), parseInt(hex[2], 16)]
+		return isLocalHostname(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)
 	}
 	const ip = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/)
 	if (ip) {
@@ -122,8 +127,10 @@ export function isLocalEvent(event) {
 	return pageIsLocal() || isLocalUrl(event?.request?.url) || hasLocalUrl(event?.contexts?.trace?.data)
 }
 
-export function isLocalLog(log) {
-	return pageIsLocal() || hasLocalUrl(log?.attributes)
+// `requestUrl` is the URL of the request a server log was written during, if any: log lines
+// carry the path, not the address the request came in on.
+export function isLocalLog(log, requestUrl) {
+	return pageIsLocal() || isLocalUrl(requestUrl) || hasLocalUrl(log?.attributes)
 }
 
 // Only real secrets are removed: passwords, Cloudflare and other API tokens, Authorization
@@ -526,9 +533,27 @@ export function echoToConsole(write) {
 
 // `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
 // `force` (SENTRY_FORCE) lets deliberate local testing through the local-address filter.
-export function sentryOptions({ dsn, environment, runtime, host, disabled = false, force = false, consoleLogs, http }) {
+// `requestUrl` returns the URL of the server request in progress, to filter its log lines.
+export function sentryOptions({
+	dsn,
+	environment,
+	runtime,
+	host,
+	disabled = false,
+	force = false,
+	requestUrl,
+	consoleLogs,
+	http
+}) {
 	const addAttributes = logAttributesFor({ runtime, host })
 	const sendEvent = (event) => (!force && isLocalEvent(event) ? null : sanitizeSentryEvent(event))
+	const currentRequestUrl = () => {
+		try {
+			return requestUrl?.()
+		} catch {
+			return undefined
+		}
+	}
 	return {
 		dsn,
 		enabled: Boolean(dsn) && environment !== 'test' && !disabled,
@@ -568,7 +593,7 @@ export function sentryOptions({ dsn, environment, runtime, host, disabled = fals
 		beforeSendTransaction: sendEvent,
 		beforeBreadcrumb: (breadcrumb) => scrub(breadcrumb),
 		beforeSendLog: (log) => {
-			if (!force && isLocalLog(log)) return null
+			if (!force && isLocalLog(log, currentRequestUrl())) return null
 			const fromConsole = log.attributes?.['sentry.origin'] === 'auto.log.console'
 			if (echoing && fromConsole) return null
 			const warning = fromConsole ? nodeWarningLog(log) : undefined
