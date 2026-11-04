@@ -203,13 +203,131 @@ export function scrub(value, depth = 0, copies = new Map()) {
 	return result
 }
 
+// Request bodies are collected only for these routes, which carry DNS, zone and sharing data
+// but no credentials. Every other route, including any added later, is left out: sign-in and
+// account routes (passwords), connections/add and token_setup (Cloudflare tokens),
+// shares/accept (invite tokens), cf/run (any Cloudflare command, such as a Worker secret),
+// rule routes (bypass tokens inside expressions), r2_upload (file bytes) and the AI plan
+// (pasted text).
+const BODY_ROUTES = new Set(
+	[
+		'records',
+		'dns_record',
+		'create_record',
+		'update_record',
+		'patch_record',
+		'delete_record',
+		'import_zone',
+		'export_zone',
+		'zone',
+		'zones',
+		'accounts',
+		'dns_lookup',
+		'dns_propagation',
+		'domain_search',
+		'domain_endings',
+		'update_ssl',
+		'update_bot_fight_mode',
+		'bot_management',
+		'rulesets',
+		'ruleset',
+		'delete_rule',
+		'dns_views',
+		'dns_view',
+		'dns_firewall_clusters',
+		'dns_firewall_cluster',
+		'turnstile_widgets',
+		'capabilities',
+		'renewals',
+		'account_analytics',
+		'r2_usage',
+		'r2_download',
+		'r2_adopt_bucket',
+		'registrar_register',
+		'ai_dns_editor/apply',
+		'ai_dns_editor/status',
+		'shares/list',
+		'shares/save',
+		'shares/remove',
+		'shares/leave',
+		'connections/list',
+		'connections/prefer',
+		'connections/rename',
+		'connections/remove',
+		'cf/search',
+		'cf/browse',
+		'cf/command'
+	].map((route) => `/api/${route}`)
+)
+
+export function collectsRequestBody(url) {
+	try {
+		const path = new URL(String(url || ''), 'http://localhost').pathname.replace(/\/+$/, '')
+		return BODY_ROUTES.has(path)
+	} catch {
+		return false
+	}
+}
+
+// What a Console run (/api/cf/run) records: the command and its non-secret inputs. A value is
+// kept only when it goes in the URL path or query string under a name that isn't secret, or is
+// true/false; anything sent in the request body (a Worker secret's --text or --key-base64, say)
+// is recorded by name only, as are inputs the catalogue doesn't describe.
+const NOT_COLLECTED = '[not collected]'
+const IN_URL = new Set(['path', 'query'])
+
+function consoleValue(spec, value) {
+	if (value === undefined || value === null || value === '') return undefined
+	const names = [spec.name, ...[].concat(spec.key || [])]
+	if (names.some((name) => isUrlSecret(String(name)))) return NOT_COLLECTED
+	if (typeof value === 'boolean') return value
+	if (!IN_URL.has(spec.in)) return NOT_COLLECTED
+	if (typeof value === 'number') return value
+	if (typeof value === 'string' && value.length <= 200) return scrubString(value)
+	return NOT_COLLECTED
+}
+
+export function consoleRunFacts(command, input = {}) {
+	const specs = new Map([...(command?.args || []), ...(command?.flags || [])].map((spec) => [spec.name, spec]))
+	const pick = (values) => {
+		if (!values || typeof values !== 'object' || Array.isArray(values)) return undefined
+		const kept = {}
+		for (const [name, value] of Object.entries(values)) {
+			const shown = consoleValue(specs.get(name) || { name, in: 'body' }, value)
+			if (shown !== undefined) kept[name] = shown
+		}
+		return Object.keys(kept).length ? kept : undefined
+	}
+	const body = input.body && typeof input.body === 'object' && !Array.isArray(input.body) ? input.body : null
+	const scalar = (value) => (typeof value === 'string' && value.length <= 200 ? scrubString(value) : undefined)
+	return {
+		command: command?.command,
+		method: command?.method,
+		path: command?.path,
+		target: scalar(input.target),
+		zone: scalar(input.zone),
+		account: scalar(input.account),
+		accountOfZone: scalar(input.accountOfZone),
+		dryRun: input.dryRun === true || undefined,
+		args: pick(input.args),
+		flags: pick(input.flags),
+		body: input.body === undefined ? undefined : NOT_COLLECTED,
+		bodyFields: body ? Object.keys(body) : undefined,
+		files: input.files && typeof input.files === 'object' ? Object.keys(input.files) : undefined
+	}
+}
+
 // Errors and transactions keep everything apart from secrets. Request cookies never leave the
 // server, and the logged-in user (id and username) is set by the server and the app.
 export function sanitizeSentryEvent(event) {
 	try {
 		if (!event || typeof event !== 'object') return null
 		const safe = scrub(event)
-		if (safe.request) delete safe.request.cookies
+		if (safe.request) {
+			delete safe.request.cookies
+			// Second line of defence for the server's body allowlist (sentry.server.config.js).
+			if (!collectsRequestBody(safe.request.url)) delete safe.request.data
+		}
 		safe.tags = { ...safe.tags, application: SERVICE_NAME, service: SERVICE_NAME }
 		return safe
 	} catch {
@@ -262,7 +380,8 @@ export function echoToConsole(write) {
 	}
 }
 
-export function sentryOptions({ dsn, environment, runtime, host, disabled = false, consoleLogs }) {
+// `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
+export function sentryOptions({ dsn, environment, runtime, host, disabled = false, consoleLogs, http }) {
 	const addAttributes = logAttributesFor({ runtime, host })
 	return {
 		dsn,
@@ -291,7 +410,12 @@ export function sentryOptions({ dsn, environment, runtime, host, disabled = fals
 		},
 		initialScope: { tags: { application: SERVICE_NAME, service: SERVICE_NAME, runtime } },
 		integrations: (defaults) => [
-			...defaults.filter((integration) => !['BrowserSession', 'ProcessSession'].includes(integration.name)),
+			...defaults.filter(
+				(integration) =>
+					!['BrowserSession', 'ProcessSession'].includes(integration.name) &&
+					!(http && integration.name === http.name)
+			),
+			...(http ? [http] : []),
 			...(consoleLogs ? [consoleLogs] : [])
 		],
 		beforeSend: sanitizeSentryEvent,

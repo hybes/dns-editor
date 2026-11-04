@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { test } from 'node:test'
 import * as Sentry from '@sentry/nuxt'
 import { log } from '../shared/utils/log.js'
 import {
+	collectsRequestBody,
+	consoleRunFacts,
 	DEFAULT_SENTRY_DSN,
 	getSentryDsn,
 	isSentryTestRuntime,
@@ -343,4 +347,156 @@ test('cut-short bodies and percent-encoded names still lose their secrets', () =
 	assert.equal(scrubString('/reset?%6ftp=482913&page=2'), '/reset?%6ftp=[redacted]&page=2')
 	assert.equal(scrubString('/x?api%2Dkey=k1&access%5Ftoken=t1'), '/x?api%2Dkey=[redacted]&access%5Ftoken=[redacted]')
 	assert.equal(scrubString('/x?zone%5Bid%5D=abc'), '/x?zone%5Bid%5D=abc')
+})
+
+// A Worker secret set from the Console: the value goes in --text (or --key-base64 for key
+// material), or straight in the JSON body, and none of those names looks like a secret.
+const WORKER_SECRET = 'sk_live_51HxWorkerSecretValue'
+const KEY_MATERIAL = 'MC4CAQAwBQYDK2VwBCIEIKeyMaterialBase64Value'
+const catalogue = JSON.parse(readFileSync(new URL('../server/cf/catalogue.json', import.meta.url), 'utf8'))
+const secretsUpdate = catalogue.commands.find((command) => command.command === 'workers secrets update')
+const consoleInput = () => ({
+	command: 'workers secrets update',
+	account: '023e105f4ecef8ad9ca31a8372d0c353',
+	args: { name: 'STRIPE_KEY' },
+	flags: { worker: 'billing-api', text: WORKER_SECRET, 'key-base64': KEY_MATERIAL, format: 'raw', usages: 'sign' },
+	body: { name: 'STRIPE_KEY', text: WORKER_SECRET, key_base64: KEY_MATERIAL, type: 'secret_text' }
+})
+
+function assertNoWorkerSecret(value) {
+	const json = JSON.stringify(value)
+	assert.ok(!json.includes(WORKER_SECRET), `Worker secret leaked: ${json}`)
+	assert.ok(!json.includes(KEY_MATERIAL), `key material leaked: ${json}`)
+}
+
+test('Console runs record the command and non-secret inputs, never flag or body values', () => {
+	assert.ok(secretsUpdate, 'the catalogue has workers secrets update')
+	const facts = consoleRunFacts(secretsUpdate, consoleInput())
+	assertNoWorkerSecret(facts)
+	assert.equal(facts.command, 'workers secrets update')
+	assert.equal(facts.method, 'PUT')
+	assert.equal(facts.account, '023e105f4ecef8ad9ca31a8372d0c353')
+	// --worker goes in the URL path, so its value is kept; body flags are named only.
+	assert.equal(facts.flags.worker, 'billing-api')
+	assert.equal(facts.flags.text, '[not collected]')
+	assert.equal(facts.flags['key-base64'], '[not collected]')
+	assert.equal(facts.flags.format, '[not collected]')
+	assert.equal(facts.args.name, '[not collected]')
+	assert.equal(facts.body, '[not collected]')
+	assert.deepEqual(facts.bodyFields, ['name', 'text', 'key_base64', 'type'])
+	// Flags the catalogue doesn't describe are treated as body inputs.
+	const unknown = consoleRunFacts(secretsUpdate, { flags: { 'made-up': WORKER_SECRET } })
+	assert.equal(unknown.flags['made-up'], '[not collected]')
+})
+
+test('request bodies are collected only on routes without credentials', () => {
+	for (const url of [
+		'/api/cf/run',
+		'https://dns.brth.dev/api/cf/run?x=1',
+		'/api/cf/run/',
+		'/api/auth/login',
+		'/api/auth/password',
+		'/api/connections/add',
+		'/api/token_setup',
+		'/api/shares/accept',
+		'/api/create_skip_rule',
+		'/api/update_rule',
+		'/api/r2_upload',
+		'/api/ai_dns_editor/plan',
+		'/api/some_new_route',
+		'',
+		undefined
+	]) {
+		assert.equal(collectsRequestBody(url), false, String(url))
+	}
+	for (const url of ['/api/create_record', 'https://dns.brth.dev/api/update_record', '/api/shares/save']) {
+		assert.equal(collectsRequestBody(url), true, url)
+	}
+	const sdkHttp = sentryOptions({
+		dsn: DEFAULT_SENTRY_DSN,
+		environment: 'production',
+		runtime: 'server',
+		http: { name: 'Http', marker: true }
+	}).integrations([{ name: 'Http' }, { name: 'Console' }])
+	assert.deepEqual(sdkHttp, [{ name: 'Console' }, { name: 'Http', marker: true }])
+})
+
+test('events from Console runs lose the request body in flag or body form', () => {
+	for (const data of [JSON.stringify(consoleInput()), consoleInput(), `flags[text]=${WORKER_SECRET}`]) {
+		const safe = sanitizeSentryEvent({
+			request: { url: 'https://dns.brth.dev/api/cf/run', method: 'POST', data },
+			contexts: { console: consoleRunFacts(secretsUpdate, consoleInput()) },
+			exception: { values: [{ type: 'Error', value: 'Couldn’t reach Cloudflare' }] }
+		})
+		assertNoWorkerSecret(safe)
+		assert.equal(safe.request.data, undefined)
+		assert.equal(safe.request.method, 'POST')
+		assert.equal(safe.contexts.console.command, 'workers secrets update')
+		assert.equal(safe.contexts.console.flags.worker, 'billing-api')
+	}
+	// Bodies on allowed routes are still kept.
+	const kept = sanitizeSentryEvent({
+		request: { url: '/api/create_record', data: { dns: { name: 'www.example.com', content: 'v=spf1 ~all' } } }
+	})
+	assert.equal(kept.request.data.dns.content, 'v=spf1 ~all')
+})
+
+test('the installed SDK never reads a Console request body', async () => {
+	const envelopes = []
+	Sentry.init({
+		...sentryOptions({
+			dsn: DEFAULT_SENTRY_DSN,
+			environment: 'production',
+			runtime: 'server',
+			host: 'web-1',
+			http: Sentry.httpIntegration({ ignoreRequestBody: (url) => !collectsRequestBody(url) })
+		}),
+		transport: () => ({
+			send: async (envelope) => {
+				envelopes.push(envelope)
+				return { statusCode: 200 }
+			},
+			flush: async () => true
+		})
+	})
+	// Reads the body the way h3 does, then fails inside the request's own async context.
+	const server = createServer(async (request, response) => {
+		const text = await new Promise((resolve) => {
+			let body = ''
+			request.on('data', (chunk) => (body += chunk))
+			request.on('end', () => resolve(body))
+		})
+		Sentry.captureException(new Error(`failed ${request.url} (${text.length} bytes)`))
+		response.end('{}')
+	})
+	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+	const base = `http://127.0.0.1:${server.address().port}`
+	try {
+		for (const body of [
+			{ ...consoleInput(), body: undefined },
+			{ ...consoleInput(), flags: { worker: 'x' } }
+		]) {
+			await fetch(`${base}/api/cf/run`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(body)
+			})
+		}
+		await fetch(`${base}/api/create_record`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ dns: { name: 'www.example.com' } })
+		})
+	} finally {
+		await new Promise((resolve) => server.close(resolve))
+	}
+	assert.equal(await Sentry.flush(2000), true)
+	await Sentry.close(2000)
+	assertNoWorkerSecret(envelopes)
+	const events = envelopes.flatMap(([, items]) => items).filter(([header]) => header.type === 'event')
+	const byPath = (path) => events.filter(([, event]) => event.request?.url?.includes(path)).map(([, event]) => event)
+	assert.equal(byPath('/api/cf/run').length, 2)
+	for (const event of byPath('/api/cf/run')) assert.equal(event.request.data, undefined)
+	// The allowlisted route still has its body, which shows capture itself is working.
+	assert.match(JSON.stringify(byPath('/api/create_record')[0].request.data), /www\.example\.com/)
 })
