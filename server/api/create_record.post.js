@@ -4,7 +4,7 @@ import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { buildRecordBody } from '../utils/dnsRecordBody'
 import { readId } from '../utils/ids'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 const invalid = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 
@@ -35,11 +35,11 @@ export default defineEventHandler(async (event) => {
 		}
 		if (result?.success) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
-			log.info('dns', `${facts.username} created ${record.type} ${record.name} in zone ${zoneId}`, facts)
+			log.info('dns', logText`${facts.username} created ${record.type} ${record.name} in zone ${zoneId}`, facts)
 		} else {
 			log.warn(
 				'dns',
-				`create ${record.type} ${record.name} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
+				logText`create ${record.type} ${record.name} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
 				{
 					...facts,
 					cfErrors: describeCfErrors(result)

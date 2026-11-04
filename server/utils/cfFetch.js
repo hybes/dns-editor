@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { log, msSince } from '../../shared/utils/log'
+import { log, logText, logValue, msSince } from '../../shared/utils/log'
 
 // Use the runtime's global fetch (undici on Node 18+/Nitro). Unlike node-fetch v2 it
 // natively serializes Web FormData/Blob, which multipart requests such as zone import need.
@@ -88,7 +88,7 @@ const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === '
 // "81057 Record already exists; 1004 DNS Validation Error", for log lines.
 export const describeCfErrors = (data) =>
 	(Array.isArray(data?.errors) ? data.errors : [])
-		.map((item) => [item?.code, item?.message].filter(Boolean).join(' '))
+		.map((item) => [item?.code, item?.message].filter(Boolean).map(logValue).join(' '))
 		.filter(Boolean)
 		.join('; ')
 		.slice(0, 500)
@@ -115,10 +115,10 @@ function noteResponse({ method, url, response, data, started }) {
 		durationMs: msSince(started),
 		cfRay: response.headers.get('cf-ray') || undefined,
 		cfErrors: errors || undefined,
-		cfErrorCodes: (data?.errors || []).map((item) => item?.code).filter(Boolean)
+		cfErrorCodes: (Array.isArray(data?.errors) ? data.errors : []).map((item) => item?.code).filter(Boolean)
 	}
 	const what = !data ? 'answered without JSON' : status === 429 ? 'rate limited' : 'failed'
-	const line = `${method} ${path} ${what} ${status}${errors ? ` (${errors})` : ''}`
+	const line = logText`${method} ${path} ${what} ${status}${errors ? logText` (${errors})` : ''}`
 	if (status >= 500 || status === 429)
 		log.warn('cloudflare', line, { ...facts, once: `${method} ${path} ${status}`, windowMs: 60_000 })
 	else log.warn('cloudflare', line, facts)
@@ -135,7 +135,7 @@ const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 		})
 	} catch (error) {
 		if (isTimeout(error)) {
-			log.warn('cloudflare', `${method} ${pathOnly(path)} timed out after ${timeout} ms`, {
+			log.warn('cloudflare', logText`${method} ${pathOnly(path)} timed out after ${timeout} ms`, {
 				method,
 				path: pathOnly(path),
 				url: path,
@@ -148,7 +148,7 @@ const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 		}
 		const reason = error?.cause?.code || error?.message
 		// Once a minute per cause: an outage is one line with a count, not one per request.
-		log.error('cloudflare', `${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
+		log.error('cloudflare', logText`${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
 			method,
 			path: pathOnly(path),
 			url: path,

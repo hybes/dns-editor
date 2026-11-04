@@ -2,7 +2,7 @@ import { createError } from 'h3'
 import { listAccounts, listZones } from './cfLists'
 import { useDb } from './db'
 import { decryptSecret, encryptSecret } from './secrets'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // A connection is one Cloudflare API token an account has added. Tokens are stored encrypted
 // and only decrypted on the server, for the request that needs one; the browser never sees them.
@@ -41,7 +41,7 @@ const tokenOf = (userId, connectionId) => {
 	} catch (error) {
 		log.error(
 			'connections',
-			`couldn’t decrypt connection ${connectionId} for user ${userId}; was NUXT_TOKEN_KEY changed?`,
+			logText`couldn’t decrypt connection ${connectionId} for user ${userId}; was NUXT_TOKEN_KEY changed?`,
 			{
 				userId,
 				connectionId,

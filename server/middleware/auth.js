@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/nuxt'
 import { createError, getQuery, getRequestHeader, getRequestHost, readBody } from 'h3'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 import { refusal } from '../utils/access'
 import { findCfCommand } from '../utils/cfCatalogue'
 import { ownsZone, tokenFor, userConnections } from '../utils/connections'
@@ -57,23 +57,31 @@ export default defineEventHandler(async (event) => {
 	if (event.method !== 'GET' && event.method !== 'HEAD') {
 		const length = Number(getRequestHeader(event, 'content-length') || 0)
 		if (length > MAX_BODY_BYTES && path !== '/api/r2_upload') {
-			log.warn('auth', `refused ${event.method} ${path}: body of ${length} bytes is over the 25 MB limit`, {
-				method: event.method,
-				path,
-				bytes: length
-			})
+			log.warn(
+				'auth',
+				logText`refused ${event.method} ${path}: body of ${length} bytes is over the 25 MB limit`,
+				{
+					method: event.method,
+					path,
+					bytes: length
+				}
+			)
 			throw createError({ statusCode: 413, message: 'That request is too large.' })
 		}
 		if (!fromThisSite(event)) {
 			const origin = getRequestHeader(event, 'origin')
 			const host = getRequestHost(event, { xForwardedHost: true })
-			log.warn('auth', `refused ${event.method} ${path} from another site (origin ${origin}, host ${host})`, {
-				method: event.method,
-				path,
-				origin,
-				host,
-				once: `${origin} ${host}`
-			})
+			log.warn(
+				'auth',
+				logText`refused ${event.method} ${path} from another site (origin ${origin}, host ${host})`,
+				{
+					method: event.method,
+					path,
+					origin,
+					host,
+					once: `${origin} ${host}`
+				}
+			)
 			throw createError({ statusCode: 403, message: 'Requests must come from DNS Manager itself' })
 		}
 	}
@@ -112,7 +120,7 @@ export default defineEventHandler(async (event) => {
 		if (reason) {
 			log.warn(
 				'sharing',
-				`refused ${path}${command ? ` (${command.command})` : ''} on shared zone ${shared.zoneId} for ${user.username}: ${reason}`,
+				logText`refused ${path}${command ? logText` (${command.command})` : ''} on shared zone ${shared.zoneId} for ${user.username}: ${reason}`,
 				{
 					path,
 					command: command?.command,
@@ -142,12 +150,16 @@ export default defineEventHandler(async (event) => {
 	}
 
 	if (!userConnections(user.id).length && hasShares(user.id)) {
-		log.warn('sharing', `refused ${path} for ${user.username}: zone ${zone || '(none)'} isn’t shared with them`, {
-			path,
-			zone,
-			userId: user.id,
-			username: user.username
-		})
+		log.warn(
+			'sharing',
+			logText`refused ${path} for ${user.username}: zone ${zone || '(none)'} isn’t shared with them`,
+			{
+				path,
+				zone,
+				userId: user.id,
+				username: user.username
+			}
+		)
 		throw createError({
 			statusCode: 403,
 			message: 'That domain isn’t shared with you.',

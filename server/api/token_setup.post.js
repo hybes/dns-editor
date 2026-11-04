@@ -6,7 +6,7 @@ import { addConnection, describeConnection, userConnections } from '../utils/con
 import { connectionLabel } from '../utils/connectionLabel'
 import { readToken } from '../utils/tokenCheck'
 import { describeCfErrors } from '../utils/cfFetch'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Makes DNS Manager's token from a one-off token that can create tokens (Cloudflare's "Create
 // Additional Tokens" template, User API Tokens Edit), so nobody has to pick 20 permissions by hand.
@@ -29,7 +29,7 @@ const failure = (message, reason) => ({ success: false, reason, errors: [{ messa
 
 // Each failed step of making the token is a warning with the account and the reason.
 const noteFailure = (event, reason, detail, facts = {}) =>
-	log.warn('token-setup', `${event.context.user?.username}: ${reason}${detail ? ` (${detail})` : ''}`, {
+	log.warn('token-setup', logText`${event.context.user?.username}: ${reason}${detail ? logText` (${detail})` : ''}`, {
 		userId: event.context.user?.id,
 		username: event.context.user?.username,
 		reason,
@@ -145,7 +145,7 @@ export default defineEventHandler(async (event) => {
 			const removed = await removeCreated()
 			log.error(
 				'token-setup',
-				`${event.context.user?.username}: couldn’t save the new connection: ${error?.message}`,
+				logText`${event.context.user?.username}: couldn’t save the new connection: ${error?.message}`,
 				{
 					userId,
 					cfTokenId: created.result?.id,
@@ -171,7 +171,7 @@ export default defineEventHandler(async (event) => {
 		const connection = describeConnection(userConnections(userId).find((row) => row.id === id))
 		log.info(
 			'token-setup',
-			`${event.context.user?.username} made a ${coverage} token with ${picked.length} permissions (connection ${id}, set-up token ${setupDeleted ? 'deleted' : 'kept'})`,
+			logText`${event.context.user?.username} made a ${coverage} token with ${picked.length} permissions (connection ${id}, set-up token ${setupDeleted ? 'deleted' : 'kept'})`,
 			{
 				userId,
 				username: event.context.user?.username,
@@ -184,10 +184,14 @@ export default defineEventHandler(async (event) => {
 			}
 		)
 		if (setupId && !setupDeleted) {
-			log.warn('token-setup', `couldn’t delete the set-up token ${setupId} for ${event.context.user?.username}`, {
-				userId,
-				setupTokenId: setupId
-			})
+			log.warn(
+				'token-setup',
+				logText`couldn’t delete the set-up token ${setupId} for ${event.context.user?.username}`,
+				{
+					userId,
+					setupTokenId: setupId
+				}
+			)
 		}
 		return {
 			success: true,

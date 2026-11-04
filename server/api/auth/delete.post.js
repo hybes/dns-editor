@@ -6,7 +6,7 @@ import { forgetScope } from '../../utils/connections'
 import { clientIp, limitAttempts } from '../../utils/rateLimit'
 import { forgetRenewals } from '../../utils/renewals'
 import { endSession, sessionUser } from '../../utils/session'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Deletes the signed-in account once its password is confirmed: its connections (and their
 // tokens), the shares it made (so those people lose access) and the shares made with it.
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
 	}
 	endSession(event)
 	useDb().prepare('delete from users where id = ?').run(user.id)
-	log.info('auth', `account ${user.username} deleted`, {
+	log.info('auth', logText`account ${user.username} deleted`, {
 		userId: user.id,
 		username: user.username,
 		ip: clientIp(event)

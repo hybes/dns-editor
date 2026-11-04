@@ -3,7 +3,7 @@ import { readJsonBody } from '../utils/readJsonBody'
 import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Imports DNS records from a pasted or uploaded BIND zone file (Cloudflare's native import).
 // Cloudflare answers with recs_added and total_records_parsed, which the page reports.
@@ -41,11 +41,11 @@ export default defineEventHandler(async (event) => {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 			log.info(
 				'dns',
-				`${facts.username} imported a zone file into zone ${zoneId}: ${facts.added} of ${facts.parsed} records added`,
+				logText`${facts.username} imported a zone file into zone ${zoneId}: ${facts.added} of ${facts.parsed} records added`,
 				facts
 			)
 		} else {
-			log.warn('dns', `zone file import into zone ${zoneId} refused: ${describeCfErrors(result)}`, {
+			log.warn('dns', logText`zone file import into zone ${zoneId} refused: ${describeCfErrors(result)}`, {
 				...facts,
 				cfErrors: describeCfErrors(result)
 			})

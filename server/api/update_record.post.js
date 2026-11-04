@@ -4,7 +4,7 @@ import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { buildRecordBody } from '../utils/dnsRecordBody'
 import { readId } from '../utils/ids'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 export default defineEventHandler(async (event) => {
 	try {
@@ -40,12 +40,16 @@ export default defineEventHandler(async (event) => {
 		}
 		if (result?.success) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
-			log.info('dns', `${facts.username} updated ${record.type} ${record.name} in zone ${zoneId}`, facts)
+			log.info('dns', logText`${facts.username} updated ${record.type} ${record.name} in zone ${zoneId}`, facts)
 		} else {
-			log.warn('dns', `update of record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`, {
-				...facts,
-				cfErrors: describeCfErrors(result)
-			})
+			log.warn(
+				'dns',
+				logText`update of record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
+				{
+					...facts,
+					cfErrors: describeCfErrors(result)
+				}
+			)
 		}
 
 		return result

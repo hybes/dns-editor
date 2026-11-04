@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
 import * as Sentry from '@sentry/nuxt'
-import { log } from '../shared/utils/log.js'
+import { log, logText, logValue } from '../shared/utils/log.js'
 import {
 	collectsRequestBody,
 	consoleRunFacts,
@@ -173,7 +173,7 @@ test('spans keep names and attributes without secrets', () => {
 test('every log names the service, the host on servers and the runtime', () => {
 	const server = logAttributesFor({ runtime: 'server', host: 'web-1' })({
 		level: 'warn',
-		message: `[dns-editor] cloudflare: GET /zones failed with Bearer ${TOKEN}`,
+		message: `cloudflare: GET /zones failed with Bearer ${TOKEN}`,
 		attributes: { path: '/zones', password: PASSWORD }
 	})
 	assertNoSecrets(server)
@@ -217,6 +217,19 @@ test('the installed SDK sends filtered errors and structured logs once each', as
 	log.info('dns', 'ben created A www.example.com', { recordName: 'www.example.com', once: 'x' })
 	log.info('dns', 'ben created A www.example.com', { recordName: 'www.example.com', once: 'x' })
 	console.warn('third-party warning about www.example.com')
+	// Node prints its own warnings through console.error, in these forms. (Node keeps the console
+	// it first warned through, which here is before Sentry.init, so they are written out.)
+	const experimental =
+		'(node:7) ExperimentalWarning: vm.USE_MAIN_CONTEXT_DEFAULT_LOADER is an experimental feature\n' +
+		'(Use `node --trace-warnings ...` to show where the warning was created)'
+	console.error(experimental)
+	console.error(experimental)
+	console.error('(node:7) [DEP0005] DeprecationWarning: Buffer() is deprecated')
+	console.error(
+		'(node:7) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///app/x.js is not specified\n' +
+			'To eliminate this warning, add "type": "module" to /app/package.json.'
+	)
+	console.error('(node:7) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///app/y.js is not specified')
 	Sentry.metrics.count('unused_metric', 1)
 	assert.equal(await Sentry.flush(2000), true)
 	await Sentry.close(2000)
@@ -226,11 +239,26 @@ test('the installed SDK sends filtered errors and structured logs once each', as
 	const logs = items.filter(([header]) => header.type === 'log').flatMap(([, payload]) => payload.items)
 	const bodies = logs.map((item) => item.body)
 	assert.deepEqual(bodies, [
-		'[dns-editor] cloudflare: GET /zones timed out after 20000 ms',
-		'[dns-editor] api: POST /api/records failed 500',
-		'[dns-editor] dns: ben created A www.example.com',
-		'third-party warning about www.example.com'
+		'cloudflare: GET /zones timed out after 20000 ms',
+		'api: POST /api/records failed 500',
+		'dns: ben created A www.example.com',
+		'third-party warning about www.example.com',
+		'node: ExperimentalWarning: vm.USE_MAIN_CONTEXT_DEFAULT_LOADER is an experimental feature',
+		'node: [DEP0005] DeprecationWarning: Buffer() is deprecated',
+		'node: [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///app/x.js is not specified\nTo eliminate this warning, add "type": "module" to /app/package.json.'
 	])
+	// GlitchTip shows the Service beside each line, so no line repeats the project name.
+	for (const body of bodies) assert.doesNotMatch(body, /dns-editor/)
+	const warnings = logs.filter((item) => item.attributes['node.warning'])
+	assert.deepEqual(
+		warnings.map((item) => [item.level, item.attributes['node.warning'].value]),
+		[
+			['info', 'ExperimentalWarning'],
+			['info', 'DeprecationWarning'],
+			['info', 'Warning']
+		]
+	)
+	assert.equal(warnings[1].attributes['node.warning_code'].value, 'DEP0005')
 	for (const item of logs) {
 		assert.equal(item.attributes['service.name'].value, 'dns-editor')
 		assert.equal(item.attributes['host.name'].value, 'web-1')
@@ -242,6 +270,38 @@ test('the installed SDK sends filtered errors and structured logs once each', as
 	const event = items.find(([header]) => header.type === 'event')[1]
 	assert.equal(event.tags.service, 'dns-editor')
 	assert.equal(event.user.username, 'ben')
+})
+
+test('logging never throws, whatever the values', () => {
+	// JSON request bodies can hold objects that can't become text: {"toString": 1} has no
+	// usable toString, so a plain template literal throws on it.
+	const hostile = JSON.parse('{"type": {"toString": 1}, "name": [{"valueOf": 1, "toString": 1}], "id": 7}')
+	assert.throws(() => `${hostile.type}`)
+	assert.equal(
+		logText`created ${hostile.type} ${hostile.name} (${hostile.id})`,
+		'created {"toString":1} {"valueOf":1,"toString":1} (7)'
+	)
+	const cyclic = {}
+	cyclic.self = cyclic
+	const list = []
+	list.push(list)
+	const throwing = {
+		get message() {
+			throw new Error('no')
+		}
+	}
+	for (const value of [Symbol('s'), 10n, cyclic, list, throwing, () => 1, null, undefined, new Error('boom')]) {
+		assert.equal(typeof logValue(value), 'string')
+	}
+	assert.equal(logValue(new Error('boom')), 'boom')
+	assert.equal(logValue(['a', 'b']), 'a, b')
+	// Nothing reaches the caller, even for unreadable messages, areas and attributes.
+	const bad = Object.create(null)
+	assert.doesNotThrow(() => {
+		log.warn(bad, bad, { value: bad, cyclic, list, symbol: Symbol('s'), big: 10n, error: throwing })
+		log.error('dns', logText`refused ${hostile.type}`, { body: hostile, once: bad })
+		log.info('dns', 'x', null)
+	})
 })
 
 test('a secret after a non-secret label is still redacted', () => {
