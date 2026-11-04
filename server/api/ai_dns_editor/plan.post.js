@@ -93,6 +93,7 @@ export default defineEventHandler(async (event) => {
 					// OpenAI's own message (bad key, quota, unknown model) is what the operator needs.
 					throw createError({
 						statusCode: 502,
+						cause: error,
 						message: `OpenAI couldn’t prepare a plan: ${error?.message || 'unknown error'}`
 					})
 				}),
@@ -106,10 +107,11 @@ export default defineEventHandler(async (event) => {
 		let parsed
 		try {
 			parsed = JSON.parse(completion.choices?.[0]?.message?.content || '')
-		} catch {
+		} catch (error) {
 			throw createError({
 				statusCode: 502,
-				message: 'OpenAI returned a plan this server couldn’t read. Try again.'
+				cause: error,
+				message: `OpenAI returned a plan this server couldn’t read (finish reason ${completion.choices?.[0]?.finish_reason}). Try again.`
 			})
 		}
 
@@ -134,6 +136,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `Couldn’t prepare a plan: ${error?.message || 'unknown error'}`
 		})
 	}

@@ -1,3 +1,4 @@
+import { log, msSince } from '../../shared/utils/log'
 import { useDb } from '../utils/db'
 import { tidyExpired } from '../utils/shares'
 
@@ -5,15 +6,38 @@ import { tidyExpired } from '../utils/shares'
 // clears expired sessions and invites every hour.
 const HOUR_MS = 60 * 60 * 1000
 
-export default defineNitroPlugin(() => {
-	useDb()
-	tidyExpired()
-	const timer = setInterval(() => {
-		try {
-			tidyExpired()
-		} catch (error) {
-			console.error('[dns-manager] Couldn’t clear expired sessions and invites:', error?.message)
+function tidy() {
+	const started = performance.now()
+	try {
+		const { sessions, invites } = tidyExpired()
+		if (sessions || invites) {
+			log.info('tidy', `cleared ${sessions} expired sessions and ${invites} expired invites`, {
+				runtime: 'cron',
+				sessions,
+				invites,
+				durationMs: msSince(started)
+			})
 		}
-	}, HOUR_MS)
+	} catch (error) {
+		log.error('tidy', `couldn’t clear expired sessions and invites: ${error?.message}`, {
+			runtime: 'cron',
+			durationMs: msSince(started),
+			error
+		})
+	}
+}
+
+export default defineNitroPlugin(() => {
+	try {
+		useDb()
+	} catch (error) {
+		log.error('startup', `couldn’t open the database: ${error?.message}`, {
+			dataDir: useRuntimeConfig().dataDir,
+			error
+		})
+		throw error
+	}
+	tidy()
+	const timer = setInterval(tidy, HOUR_MS)
 	timer.unref?.()
 })

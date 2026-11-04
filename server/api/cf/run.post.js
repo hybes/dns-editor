@@ -1,9 +1,12 @@
+import * as Sentry from '@sentry/nuxt'
 import { createError } from 'h3'
 import { readJsonBody } from '../../utils/readJsonBody'
 import { buildCfRequest, describeCfRequest, requireCfCommand, sendCfRequest } from '../../utils/cfCommand'
-import { invalidateCfCache } from '../../utils/cfFetch'
+import { describeCfErrors, invalidateCfCache } from '../../utils/cfFetch'
 import { forgetRenewals } from '../../utils/renewals'
 import { refusal } from '../../utils/access'
+import { log } from '../../../shared/utils/log'
+import { consoleRunFacts } from '../../../shared/utils/sentry'
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
 
@@ -31,6 +34,10 @@ export default defineEventHandler(async (event) => {
 		}
 
 		const command = await requireCfCommand(input.command)
+		// The request body isn't collected for this route (it can hold any secret a command
+		// takes), so errors and logs carry this summary: the command and its non-secret inputs.
+		const facts = consoleRunFacts(command, input)
+		Sentry.setContext('console', facts)
 		// Registering a domain is charged and can't be refunded. The Registrar page checks the
 		// price again just before it buys, as cf does, so real runs go there instead.
 		if (GUARDED_COMMANDS[command.command] && input.dryRun !== true) {
@@ -65,16 +72,42 @@ export default defineEventHandler(async (event) => {
 		}
 
 		const response = await sendCfRequest(apiKey, command, request)
+		const user = event.context.user
+		const outcome = {
+			...facts,
+			requestPath: request.path,
+			zoneId: request.zoneId,
+			accountId: request.accountId,
+			shared: event.context.access?.shared || undefined,
+			userId: user?.id,
+			username: user?.username
+		}
 		// A change made here can affect any page's cached reads, so drop them all for this token.
 		if (response?.success && command.method !== 'GET') {
 			invalidateCfCache({ apiKey })
 			if (command.command.startsWith('registrar ')) forgetRenewals()
+			log.info('console', `${user?.username} ran ${command.command} (${command.method} ${request.path})`, {
+				...outcome,
+				outcome: 'success'
+			})
+		} else if (!response?.success) {
+			const errors = describeCfErrors(response)
+			log.warn(
+				'console',
+				`${user?.username} ran ${command.command}: Cloudflare refused it (${errors || 'no detail'})`,
+				{
+					...outcome,
+					outcome: 'refused',
+					cfErrors: errors
+				}
+			)
 		}
 		return { ...response, request: described }
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: error?.message || 'Unknown error'
 		})
 	}

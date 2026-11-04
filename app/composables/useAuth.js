@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/nuxt'
+
 // The signed-in DNS Manager account and its Cloudflare connections (never their tokens),
 // shared by every page. The session itself is an HttpOnly cookie the page can't read, so
 // load() asks the server; the route middleware calls it before the first page renders.
@@ -5,6 +7,9 @@ export function useAuth() {
 	const state = useState('dm-auth', () => ({ loaded: false, user: null, connections: [], sharedWithMe: 0 }))
 
 	const set = (result) => {
+		const user = result?.user
+		// Browser errors and logs name the signed-in account.
+		Sentry.setUser(user ? { id: String(user.id), username: user.username } : null)
 		state.value = {
 			loaded: true,
 			user: result?.user || null,

@@ -1,4 +1,6 @@
+import * as Sentry from '@sentry/nuxt'
 import { createError, getQuery, getRequestHeader, getRequestHost, readBody } from 'h3'
+import { log } from '../../shared/utils/log'
 import { refusal } from '../utils/access'
 import { findCfCommand } from '../utils/cfCatalogue'
 import { ownsZone, tokenFor, userConnections } from '../utils/connections'
@@ -55,9 +57,23 @@ export default defineEventHandler(async (event) => {
 	if (event.method !== 'GET' && event.method !== 'HEAD') {
 		const length = Number(getRequestHeader(event, 'content-length') || 0)
 		if (length > MAX_BODY_BYTES && path !== '/api/r2_upload') {
+			log.warn('auth', `refused ${event.method} ${path}: body of ${length} bytes is over the 25 MB limit`, {
+				method: event.method,
+				path,
+				bytes: length
+			})
 			throw createError({ statusCode: 413, message: 'That request is too large.' })
 		}
 		if (!fromThisSite(event)) {
+			const origin = getRequestHeader(event, 'origin')
+			const host = getRequestHost(event, { xForwardedHost: true })
+			log.warn('auth', `refused ${event.method} ${path} from another site (origin ${origin}, host ${host})`, {
+				method: event.method,
+				path,
+				origin,
+				host,
+				once: `${origin} ${host}`
+			})
 			throw createError({ statusCode: 403, message: 'Requests must come from DNS Manager itself' })
 		}
 	}
@@ -68,6 +84,8 @@ export default defineEventHandler(async (event) => {
 	if (!user) {
 		throw createError({ statusCode: 401, message: 'Sign in to continue', data: { reason: 'signed_out' } })
 	}
+	// Errors and logs from this request name the account.
+	Sentry.setUser({ id: String(user.id), username: user.username })
 	if (NO_TOKEN.has(path) || /^\/api\/(connections|shares)\//.test(path)) return
 
 	let body = null
@@ -91,7 +109,22 @@ export default defineEventHandler(async (event) => {
 	if (shared && !(await ownsZone(user.id, zone))) {
 		const command = path === '/api/cf/run' ? await findCfCommand(body?.command) : null
 		const reason = refusal({ path, command, shared })
-		if (reason) throw createError({ statusCode: 403, message: reason, data: { reason: 'not_shared' } })
+		if (reason) {
+			log.warn(
+				'sharing',
+				`refused ${path}${command ? ` (${command.command})` : ''} on shared zone ${shared.zoneId} for ${user.username}: ${reason}`,
+				{
+					path,
+					command: command?.command,
+					zoneId: shared.zoneId,
+					ownerId: shared.ownerId,
+					userId: user.id,
+					username: user.username,
+					reason
+				}
+			)
+			throw createError({ statusCode: 403, message: reason, data: { reason: 'not_shared' } })
+		}
 		const { token } = await tokenFor(shared.ownerId, { zone: shared.zoneId })
 		if (body) {
 			for (const key of ['currZone', 'zone', 'accountOfZone']) if (body[key]) body[key] = shared.zoneId
@@ -101,6 +134,7 @@ export default defineEventHandler(async (event) => {
 			// zone's own account.
 			if (command && command.scope !== 'zone') body.accountOfZone = shared.zoneId
 		}
+		Sentry.setTag('shared_zone', shared.zoneId)
 		event.context.access = { shared: true, ...shared }
 		event.context.cfToken = token
 		if (body) body.apiKey = token
@@ -108,6 +142,12 @@ export default defineEventHandler(async (event) => {
 	}
 
 	if (!userConnections(user.id).length && hasShares(user.id)) {
+		log.warn('sharing', `refused ${path} for ${user.username}: zone ${zone || '(none)'} isn’t shared with them`, {
+			path,
+			zone,
+			userId: user.id,
+			username: user.username
+		})
 		throw createError({
 			statusCode: 403,
 			message: 'That domain isn’t shared with you.',
@@ -122,5 +162,6 @@ export default defineEventHandler(async (event) => {
 	event.context.access = { shared: false }
 	event.context.cfToken = token
 	event.context.connectionId = connectionId
+	Sentry.setTag('connection', String(connectionId))
 	if (body) body.apiKey = token
 })

@@ -102,6 +102,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `DNS lookup failed: ${error?.message || 'Unknown error'}`
 		})
 	}

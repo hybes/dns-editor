@@ -2,6 +2,8 @@ import { createError, getQuery, getRequestHeader, readRawBody } from 'h3'
 import { sendCfRequest } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 import { buildObjectRequest, findZoneBucket, readObjectKey, TRANSFER_TIMEOUT_MS } from '../utils/r2Files'
+import { describeCfErrors } from '../utils/cfFetch'
+import { log, msSince } from '../../shared/utils/log'
 
 // Uploads one file to the zone's R2 bucket with `r2 objects put`. The body is the file's
 // bytes, so everything else comes in the query, and the token from the signed-in account's
@@ -55,11 +57,41 @@ export default defineEventHandler(async (event) => {
 			flags: { 'content-type': type },
 			body
 		})
-		return await sendCfRequest(apiKey, command, request, { timeout: TRANSFER_TIMEOUT_MS })
+		const started = performance.now()
+		const result = await sendCfRequest(apiKey, command, request, { timeout: TRANSFER_TIMEOUT_MS })
+		const facts = {
+			zoneId,
+			accountId: target.accountId,
+			bucket: target.bucket,
+			key,
+			contentType: type,
+			bytes: body.length,
+			durationMs: msSince(started),
+			userId: event.context.user?.id,
+			username: event.context.user?.username
+		}
+		if (result?.success) {
+			log.info(
+				'files',
+				`${facts.username} uploaded ${key} (${body.length} bytes) to ${target.bucket} in ${facts.durationMs} ms`,
+				facts
+			)
+		} else {
+			log.warn(
+				'files',
+				`upload of ${key} (${body.length} bytes) to ${target.bucket} failed: ${describeCfErrors(result)}`,
+				{
+					...facts,
+					cfErrors: describeCfErrors(result)
+				}
+			)
+		}
+		return result
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `Couldn’t upload the file: ${error?.message || 'unknown error'}`
 		})
 	}

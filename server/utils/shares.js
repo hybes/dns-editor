@@ -281,10 +281,14 @@ export function sharedZone(memberId, zone) {
 }
 
 // Removes invites and sessions that have expired, so the tables don't grow for ever.
+// Returns how many of each it removed.
 export function tidyExpired() {
 	const db = useDb()
-	db.prepare(
-		"delete from shares where member_id is null and invite_expires_at < ? and created_at < datetime('now', '-30 days')"
-	).run(new Date().toISOString())
-	db.prepare('delete from sessions where expires_at < ?').run(new Date().toISOString())
+	const invites = db
+		.prepare(
+			"delete from shares where member_id is null and invite_expires_at < ? and created_at < datetime('now', '-30 days')"
+		)
+		.run(new Date().toISOString()).changes
+	const sessions = db.prepare('delete from sessions where expires_at < ?').run(new Date().toISOString()).changes
+	return { sessions: Number(sessions), invites: Number(invites) }
 }

@@ -1,3 +1,5 @@
+import { log } from '../../shared/utils/log'
+
 // Indicative registration prices. Porkbun publishes its full TLD price list without
 // authentication; it is used here purely as a reference figure next to search results.
 // Any failure degrades to "no price shown" rather than breaking the search.
@@ -52,7 +54,16 @@ export async function getTldPricing() {
 			state.data = { value, expiresAt: Date.now() + PRICING_TTL }
 			state.failedUntil = 0
 			return value
-		} catch {
+		} catch (error) {
+			log.warn(
+				'pricing',
+				`Porkbun price list unavailable${state.data ? ', using the stale copy' : ''}: ${error?.message}`,
+				{
+					url: PRICING_URL,
+					stale: Boolean(state.data),
+					error
+				}
+			)
 			state.failedUntil = Date.now() + FAILURE_TTL
 			return state.data?.value || null
 		} finally {

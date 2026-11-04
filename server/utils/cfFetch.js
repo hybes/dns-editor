@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { log, msSince } from '../../shared/utils/log'
 
 // Use the runtime's global fetch (undici on Node 18+/Nitro). Unlike node-fetch v2 it
 // natively serializes Web FormData/Blob, which multipart requests such as zone import need.
@@ -84,15 +85,78 @@ const timeoutEnvelope = (timeout = REQUEST_TIMEOUT_MS) =>
 
 const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError'
 
+// "81057 Record already exists; 1004 DNS Validation Error", for log lines.
+export const describeCfErrors = (data) =>
+	(Array.isArray(data?.errors) ? data.errors : [])
+		.map((item) => [item?.code, item?.message].filter(Boolean).join(' '))
+		.filter(Boolean)
+		.join('; ')
+		.slice(0, 500)
+
+const pathOnly = (url) => String(url).split('?')[0]
+
+// Warns about Cloudflare answers that mean something degraded: a 5xx, rate limiting, a body
+// that isn't JSON, or a write that Cloudflare refused. Failed reads are usually a missing
+// permission the pages already explain, so they aren't logged.
+function noteResponse({ method, url, response, data, started }) {
+	const status = response.status
+	// Some deletes answer 204 with no body at all, which is still a success. A 200 whose body
+	// isn't JSON (an HTML error page from a proxy, say) is worth a warning.
+	if (!data && response.ok && (status === 204 || response.headers.get('content-length') === '0')) return
+	const refusedWrite = method !== 'GET' && method !== 'HEAD' && (!response.ok || data?.success === false)
+	if (status < 500 && status !== 429 && data && !refusedWrite) return
+	const path = pathOnly(url)
+	const errors = describeCfErrors(data)
+	const facts = {
+		method,
+		path,
+		url,
+		'http.status_code': status,
+		durationMs: msSince(started),
+		cfRay: response.headers.get('cf-ray') || undefined,
+		cfErrors: errors || undefined,
+		cfErrorCodes: (data?.errors || []).map((item) => item?.code).filter(Boolean)
+	}
+	const what = !data ? 'answered without JSON' : status === 429 ? 'rate limited' : 'failed'
+	const line = `${method} ${path} ${what} ${status}${errors ? ` (${errors})` : ''}`
+	if (status >= 500 || status === 429)
+		log.warn('cloudflare', line, { ...facts, once: `${method} ${path} ${status}`, windowMs: 60_000 })
+	else log.warn('cloudflare', line, facts)
+}
+
 // Returns null when Cloudflare doesn't answer in time; other network failures throw.
 const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
+	const started = performance.now()
+	const method = init?.method || 'GET'
 	try {
 		return await fetch(`${API_BASE}${path}`, {
 			...init,
 			signal: AbortSignal.timeout(timeout)
 		})
 	} catch (error) {
-		if (isTimeout(error)) return null
+		if (isTimeout(error)) {
+			log.warn('cloudflare', `${method} ${pathOnly(path)} timed out after ${timeout} ms`, {
+				method,
+				path: pathOnly(path),
+				url: path,
+				timeoutMs: timeout,
+				durationMs: msSince(started),
+				once: `timeout ${method} ${pathOnly(path)}`,
+				windowMs: 60_000
+			})
+			return null
+		}
+		const reason = error?.cause?.code || error?.message
+		// Once a minute per cause: an outage is one line with a count, not one per request.
+		log.error('cloudflare', `${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
+			method,
+			path: pathOnly(path),
+			url: path,
+			durationMs: msSince(started),
+			error,
+			once: `connect ${reason}`,
+			windowMs: 60_000
+		})
 		throw error
 	}
 }
@@ -110,6 +174,7 @@ const readJson = async (response, timeout) => {
 // endpoints that take another format (SCIM, KV values). `headers` are the extra request
 // headers some commands set, such as Prefer.
 const performRequest = async ({ token, method, url, headers, body, rawBody, contentType, timeout }) => {
+	const started = performance.now()
 	const raw = rawBody !== undefined
 	// A command can set the content type itself, such as an R2 object's (`--content-type`).
 	const given = Object.entries(headers || {}).find(([name]) => name.toLowerCase() === 'content-type')
@@ -132,6 +197,7 @@ const performRequest = async ({ token, method, url, headers, body, rawBody, cont
 	if (!response) return timeoutEnvelope(timeout)
 
 	const data = await readJson(response, timeout)
+	noteResponse({ method, url, response, data, started })
 
 	if (!data) {
 		// Some deletes answer 204 with no body at all, which is still a success.
@@ -229,6 +295,7 @@ const TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-ndjson|dns)|[^;
 export async function cfFetchRaw({ apiKey, method = 'GET', path, query = '', headers, body, as, timeout }) {
 	assertSafePath(path)
 	assertSafeQuery(query)
+	const started = performance.now()
 	const response = await cloudflareFetch(
 		`${path}${query}`,
 		{
@@ -252,12 +319,14 @@ export async function cfFetchRaw({ apiKey, method = 'GET', path, query = '', hea
 	}
 	if (!response.ok) {
 		// Failures come back as Cloudflare's JSON envelope; keep its message when present.
+		let data = null
 		try {
-			const data = JSON.parse(bytes.toString('utf8'))
-			if (data?.errors?.length) return { success: false, errors: data.errors }
+			data = JSON.parse(bytes.toString('utf8'))
 		} catch {
 			// Not JSON; fall through to the status code.
 		}
+		noteResponse({ method, url: `${path}${query}`, response, data, started })
+		if (data?.errors?.length) return { success: false, errors: data.errors }
 		return errorEnvelope(`HTTP Error: ${response.status}`)
 	}
 	const contentType = response.headers.get('content-type') || ''
@@ -273,6 +342,7 @@ export async function cfFetchRaw({ apiKey, method = 'GET', path, query = '', hea
 export async function cfFetchMultipart({ apiKey, method = 'POST', path, query = '', headers, form }) {
 	assertSafePath(path)
 	assertSafeQuery(query)
+	const started = performance.now()
 	const response = await cloudflareFetch(`${path}${query}`, {
 		method,
 		headers: { ...headers, Authorization: bearer(apiKey) },
@@ -280,6 +350,7 @@ export async function cfFetchMultipart({ apiKey, method = 'POST', path, query = 
 	})
 	if (!response) return timeoutEnvelope()
 	const data = await readJson(response)
+	noteResponse({ method, url: `${path}${query}`, response, data, started })
 	if (!data) {
 		return errorEnvelope(`HTTP Error: ${response.status}`)
 	}

@@ -51,7 +51,9 @@ const parseJson = (text, label) => {
 	try {
 		return JSON.parse(text)
 	} catch (error) {
-		throw badRequest(`${label} isn’t valid JSON: ${error.message}`)
+		// The parser's own message quotes the text, which can be a secret, so give only where.
+		const where = /at position \d+(?: \(line \d+ column \d+\))?/.exec(error?.message || '')?.[0]
+		throw badRequest(`${label} isn’t valid JSON${where ? ` (${where})` : ''}`)
 	}
 }
 
