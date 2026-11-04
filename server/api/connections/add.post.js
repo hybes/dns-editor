@@ -2,7 +2,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { addConnection, describeConnection, userConnections } from '../../utils/connections'
 import { connectionLabel } from '../../utils/connectionLabel'
 import { checkToken, readToken } from '../../utils/tokenCheck'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Adds a Cloudflare API token to the signed-in account, once Cloudflare accepts it. Body:
 // { token, label? }. A token that can only create tokens answers reason "token_maker", and the
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
 		const level = checked.reason === 'unreachable' ? 'warn' : 'info'
 		log[level](
 			'connections',
-			`token from ${user.username} not added (${checked.reason}): ${checked.errors?.[0]?.message}`,
+			logText`token from ${user.username} not added (${checked.reason}): ${checked.errors?.[0]?.message}`,
 			{
 				userId: user.id,
 				username: user.username,
@@ -31,14 +31,18 @@ export default defineEventHandler(async (event) => {
 			: await connectionLabel(token)
 	const id = addConnection(event.context.user.id, { token, label, cfTokenId: checked.result.id })
 	const row = userConnections(event.context.user.id).find((item) => item.id === id)
-	log.info('connections', `${user.username} added connection ${id} “${label}” (${checked.result.owner} token)`, {
-		userId: user.id,
-		username: user.username,
-		connectionId: id,
-		label,
-		owner: checked.result.owner,
-		cfTokenId: checked.result.id,
-		expiresOn: checked.result.expires_on
-	})
+	log.info(
+		'connections',
+		logText`${user.username} added connection ${id} “${label}” (${checked.result.owner} token)`,
+		{
+			userId: user.id,
+			username: user.username,
+			connectionId: id,
+			label,
+			owner: checked.result.owner,
+			cfTokenId: checked.result.id,
+			expiresOn: checked.result.expires_on
+		}
+	)
 	return { success: true, errors: [], messages: [], result: describeConnection(row) }
 })

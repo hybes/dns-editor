@@ -1,7 +1,7 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../../utils/readJsonBody'
 import { removeConnection } from '../../utils/connections'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Removes one of the signed-in account's connections and forgets its token. The token itself
 // keeps working in Cloudflare until it's deleted there. Body: { id }.
@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 		throw createError({ statusCode: 404, message: 'That connection doesn’t exist.' })
 	}
 	const user = event.context.user
-	log.info('connections', `${user.username} removed connection ${Number(body.id)}`, {
+	log.info('connections', logText`${user.username} removed connection ${Number(body.id)}`, {
 		userId: user.id,
 		username: user.username,
 		connectionId: Number(body.id)

@@ -4,7 +4,7 @@ import { buildCloudflareDnsPayload } from '../../utils/dnsEditor'
 import { isCloudflareId, readId } from '../../utils/ids'
 import { invalidateCfCache } from '../../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../../utils/cfCommand'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 const MAX_CHANGES = 100
 
@@ -132,7 +132,7 @@ export default defineEventHandler(async (event) => {
 			updated,
 			failed: failures.length,
 			failures: failures.map(
-				(item) => `${item.action} ${item.type} ${item.name}: ${item.code ?? ''} ${item.message}`
+				(item) => logText`${item.action} ${item.type} ${item.name}: ${item.code ?? ''} ${item.message}`
 			),
 			userId: event.context.user?.id,
 			username: event.context.user?.username
@@ -141,11 +141,15 @@ export default defineEventHandler(async (event) => {
 		if (failures.length) {
 			log.warn(
 				'ai-editor',
-				`applied changes to ${zoneData.result.name} with failures (${summary}): ${failures[0].message}`,
+				logText`applied changes to ${zoneData.result.name} with failures (${summary}): ${failures[0].message}`,
 				facts
 			)
 		} else {
-			log.info('ai-editor', `${facts.username} applied changes to ${zoneData.result.name} (${summary})`, facts)
+			log.info(
+				'ai-editor',
+				logText`${facts.username} applied changes to ${zoneData.result.name} (${summary})`,
+				facts
+			)
 		}
 
 		// success:false whenever any change failed, so a partial apply can't pass for a full one.

@@ -357,14 +357,46 @@ export function sanitizeSentrySpan(span) {
 }
 
 // Every log line names the service, the host (servers only) and the runtime, and loses any
-// secret that slipped into its text or attributes.
+// secret that slipped into its text or attributes. A line the filter can't read is dropped.
 export function logAttributesFor({ runtime, host }) {
 	return (log) => {
-		const attributes = scrub(log.attributes || {})
-		attributes['service.name'] = SERVICE_NAME
-		if (host) attributes['host.name'] = host
-		attributes.runtime ||= runtime
-		return { ...log, message: scrubString(String(log.message ?? '')), attributes }
+		try {
+			const attributes = scrub(log.attributes || {})
+			attributes['service.name'] = SERVICE_NAME
+			if (host) attributes['host.name'] = host
+			attributes.runtime ||= runtime
+			return { ...log, message: scrubString(String(log.message ?? '')), attributes }
+		} catch {
+			return null
+		}
+	}
+}
+
+// Node prints its own warnings (ExperimentalWarning, DeprecationWarning, a package.json with no
+// "type", and so on) through console.error as "(node:123) [CODE] Name: text". They describe the
+// runtime, not a fault in the app, so each kind is sent once per process as info and repeats
+// are dropped.
+const NODE_WARNING = /^\((?:node|[\w.-]+):\d+\) (?:\[([\w-]+)\] )?(\w*Warning)\b/
+const seenNodeWarnings = new Set()
+
+export function nodeWarningLog(log) {
+	const message = typeof log?.message === 'string' ? log.message : ''
+	const match = message.match(NODE_WARNING)
+	if (!match) return undefined
+	const [, code, name] = match
+	const kind = code || name
+	if (seenNodeWarnings.has(kind)) return null
+	seenNodeWarnings.add(kind)
+	const text = message
+		.replace(/^\([^)]*\) /, '')
+		.replace(/\n\(Use `[^`]*` to show where the warning was created\)/, '')
+		.trim()
+	return {
+		...log,
+		level: 'info',
+		severityNumber: undefined,
+		message: `node: ${text}`,
+		attributes: { ...log.attributes, 'node.warning': name, ...(code && { 'node.warning_code': code }) }
 	}
 }
 
@@ -422,8 +454,11 @@ export function sentryOptions({ dsn, environment, runtime, host, disabled = fals
 		beforeSendTransaction: sanitizeSentryEvent,
 		beforeBreadcrumb: (breadcrumb) => scrub(breadcrumb),
 		beforeSendLog: (log) => {
-			if (echoing && log.attributes?.['sentry.origin'] === 'auto.log.console') return null
-			return addAttributes(log)
+			const fromConsole = log.attributes?.['sentry.origin'] === 'auto.log.console'
+			if (echoing && fromConsole) return null
+			const warning = fromConsole ? nodeWarningLog(log) : undefined
+			if (warning === null) return null
+			return addAttributes(warning || log)
 		},
 		beforeSendMetric: () => null
 	}

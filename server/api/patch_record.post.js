@@ -3,7 +3,7 @@ import { readJsonBody } from '../utils/readJsonBody'
 import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Fields a partial update (cf's `edit`, a PATCH) may send. It leaves everything else on the record (tags,
 // settings, comment) untouched, where a full PUT would overwrite what it isn't given.
@@ -64,13 +64,13 @@ export default defineEventHandler(async (event) => {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 			log.info(
 				'dns',
-				`${facts.username} changed ${fields} on ${facts.recordType} ${facts.recordName} in zone ${zoneId}`,
+				logText`${facts.username} changed ${fields} on ${facts.recordType} ${facts.recordName} in zone ${zoneId}`,
 				facts
 			)
 		} else {
 			log.warn(
 				'dns',
-				`change of ${fields} on record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
+				logText`change of ${fields} on record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
 				{
 					...facts,
 					cfErrors: describeCfErrors(result)

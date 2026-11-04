@@ -3,7 +3,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { checkPassword, readNewPassword, setPassword } from '../../utils/accounts'
 import { clientIp, limitAttempts } from '../../utils/rateLimit'
 import { endOtherSessions, sessionUser } from '../../utils/session'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Changes the signed-in account's password and signs out its other sessions.
 // Body: { current, password }.
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
 	}
 	await setPassword(user.id, password)
 	endOtherSessions(event, user.id)
-	log.info('auth', `${user.username} changed their password`, {
+	log.info('auth', logText`${user.username} changed their password`, {
 		userId: user.id,
 		username: user.username,
 		ip: clientIp(event)

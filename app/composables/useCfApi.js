@@ -1,5 +1,5 @@
 import { TOKEN_REJECTED_CODES } from '#shared/utils/cloudflare'
-import { log } from '#shared/utils/log'
+import { log, logText } from '#shared/utils/log'
 
 const isTokenRejected = (response) =>
 	(response?.errors || []).some(
@@ -36,7 +36,7 @@ export function useCfApi() {
 				navigateTo('/connections')
 			} else if (!status) {
 				// The server never answered, so it has no record of this; only the browser does.
-				log.warn('api', `POST /api/${endpoint} got no answer from the server: ${error?.message}`, {
+				log.warn('api', logText`POST /api/${endpoint} got no answer from the server: ${error?.message}`, {
 					endpoint,
 					timeoutMs: timeout,
 					online: typeof navigator === 'undefined' ? undefined : navigator.onLine,
@@ -49,7 +49,7 @@ export function useCfApi() {
 		}
 		if (response && response.success === false) {
 			if (isTokenRejected(response)) {
-				log.warn('cloudflare', `token rejected on /api/${endpoint}: ${cfErrorMessage(response)}`, {
+				log.warn('cloudflare', logText`token rejected on /api/${endpoint}: ${cfErrorMessage(response)}`, {
 					endpoint,
 					cfErrorCodes: (response.errors || []).map((item) => item?.code).filter(Boolean),
 					once: 'token-rejected'

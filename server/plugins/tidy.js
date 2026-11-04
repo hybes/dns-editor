@@ -1,4 +1,4 @@
-import { log, msSince } from '../../shared/utils/log'
+import { log, logText, msSince } from '../../shared/utils/log'
 import { useDb } from '../utils/db'
 import { tidyExpired } from '../utils/shares'
 
@@ -11,7 +11,7 @@ function tidy() {
 	try {
 		const { sessions, invites } = tidyExpired()
 		if (sessions || invites) {
-			log.info('tidy', `cleared ${sessions} expired sessions and ${invites} expired invites`, {
+			log.info('tidy', logText`cleared ${sessions} expired sessions and ${invites} expired invites`, {
 				runtime: 'cron',
 				sessions,
 				invites,
@@ -19,7 +19,7 @@ function tidy() {
 			})
 		}
 	} catch (error) {
-		log.error('tidy', `couldn’t clear expired sessions and invites: ${error?.message}`, {
+		log.error('tidy', logText`couldn’t clear expired sessions and invites: ${error?.message}`, {
 			runtime: 'cron',
 			durationMs: msSince(started),
 			error
@@ -31,7 +31,7 @@ export default defineNitroPlugin(() => {
 	try {
 		useDb()
 	} catch (error) {
-		log.error('startup', `couldn’t open the database: ${error?.message}`, {
+		log.error('startup', logText`couldn’t open the database: ${error?.message}`, {
 			dataDir: useRuntimeConfig().dataDir,
 			error
 		})
