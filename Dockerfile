@@ -12,6 +12,7 @@ COPY . .
 
 # Install exactly what the lockfile resolves, including the platform-specific
 # optional native packages selected by npm, and build the Nitro server output.
+ARG SENTRY_AUTH_TOKEN
 RUN npm ci && npm run build
 
 # ---- Runtime stage ----

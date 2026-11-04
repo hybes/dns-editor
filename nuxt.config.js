@@ -1,3 +1,7 @@
+import { getSentryDsn, isSentryTestRuntime } from './shared/utils/sentry'
+
+const uploadSourceMaps = Boolean(process.env.SENTRY_AUTH_TOKEN?.trim())
+
 export default defineNuxtConfig({
 	// Everything the app shows depends on a token held in the browser, so pages render
 	// client-side only. The Nitro server still serves the /api proxies.
@@ -28,7 +32,26 @@ export default defineNuxtConfig({
 		}
 	},
 
-	modules: ['@nuxt/ui', '@nuxt/eslint'],
+	modules: ['@nuxt/ui', '@nuxt/eslint', '@sentry/nuxt/module'],
+
+	sourcemap: uploadSourceMaps ? { client: 'hidden', server: 'hidden' } : false,
+
+	sentry: {
+		org: 'connect-dorset',
+		project: 'dns-editor',
+		sentryUrl: process.env.SENTRY_URL || 'https://error.cnnct.uk/',
+		authToken: process.env.SENTRY_AUTH_TOKEN,
+		telemetry: false,
+		silent: !uploadSourceMaps,
+		release: { create: false, finalize: false, setCommits: false },
+		sourcemaps: {
+			disable: !uploadSourceMaps,
+			filesToDeleteAfterUpload: ['.nuxt/dist/**/*.map', '.output/**/*.map']
+		},
+		errorHandler: () => {
+			console.warn('[GlitchTip] Source-map upload failed; continuing without source maps.')
+		}
+	},
 
 	ui: {
 		fonts: false,
@@ -49,7 +72,12 @@ export default defineNuxtConfig({
 		// 32 random bytes, base64, to encrypt stored Cloudflare tokens. See server/utils/secrets.js.
 		tokenKey: process.env.NUXT_TOKEN_KEY || '',
 		openaiApiKey: process.env.OPENAI_API_KEY || '',
-		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5.4-nano'
+		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5.4-nano',
+		public: {
+			sentryDsn: getSentryDsn(process.env, 'browser'),
+			sentryEnvironment: process.env.NODE_ENV || 'development',
+			sentryDisabled: isSentryTestRuntime() || process.env.NUXT_PUBLIC_SENTRY_DISABLED === 'true'
+		}
 	},
 
 	css: ['~/assets/css/main.css'],

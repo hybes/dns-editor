@@ -106,6 +106,7 @@ These tools contact third-party services from this server: the resolvers, the re
 
 ```bash
 npm run lint
+npm run test:monitoring  # privacy filters and SDK envelopes; no network requests
 npm run build
 npm run test:e2e   # after build: accounts, connections and sharing against a stand-in Cloudflare
 npm run cf:check   # after changing the catalogue or server/utils/cfCommand.js
@@ -143,6 +144,18 @@ The server keeps its data in `NUXT_DATA_DIR` (`.data` by default): the SQLite da
 To back up, copy the data directory while the app is stopped, or use `sqlite3 dns-manager.sqlite ".backup backup.sqlite"` while it runs (the database uses write-ahead logging, so copying the file alone mid-write can miss changes). Keep `NUXT_TOKEN_KEY` with the backup, separately. The container has a health check on `/api/health`, which also confirms the database answers.
 
 Theme tokens live in [`app/assets/css/main.css`](app/assets/css/main.css), while Nuxt UI component defaults live in [`app/app.config.js`](app/app.config.js).
+
+## Error monitoring
+
+Browser and Nitro server errors go to our self-hosted [GlitchTip](https://error.cnnct.uk), under `connect-dorset / dns-editor`, using the standard Nuxt Sentry SDK. Production uses the project's public DSN by default. Override `SENTRY_DSN` for the server and `NUXT_PUBLIC_SENTRY_DSN` for the browser at runtime. Local development sends nothing unless its DSN is explicitly set; tests disable monitoring. See [`.env.example`](.env.example).
+
+Errors are sampled at 100%; production traces at 1%, with no tracing in development. Sessions, replay, profiling, feedback, cron check-ins, client reports, logs and metrics are not sent. Events carry `application: dns-editor` and a browser/server tag.
+
+The privacy filter keeps error types, build-file stack locations, source-map IDs and basic trace timing. It removes all request headers, cookies, bodies, query strings, users, breadcrumbs, custom context, attachments and free-form messages, including exception text and span attributes. DNS record contents and Cloudflare tokens must never enter monitoring, even when an upstream error includes them. Trace names are reduced to `dns-editor`.
+
+Source maps upload only when `SENTRY_AUTH_TOKEN` is provided at build time. In Coolify on `host.cnnct.uk`, add it as a **build-time variable** for the Dockerfile build pack; the build stage reads it through `ARG SENTRY_AUTH_TOKEN`, and the runtime image contains only the built output. For a local container build, pass `--build-arg SENTRY_AUTH_TOKEN`. Uploads target `https://error.cnnct.uk/`, organisation `connect-dorset`, project `dns-editor`; `SENTRY_URL` can override the build endpoint for local upload tests. Upload failures warn and let the build finish. Generated maps are deleted, including after upload failures, and are never served publicly. Commit association and deploy records are disabled.
+
+No hosting changes are needed for error events. `SENTRY_DISABLED=true` and `NUXT_PUBLIC_SENTRY_DISABLED=true` disable the server and browser respectively. Pushing to `main` still triggers Coolify's usual deployment for `dns.brth.dev` and `dns.brth.uk`.
 
 ## Privacy and indexing
 
