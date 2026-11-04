@@ -268,6 +268,8 @@ try {
 	app = spawn('node', ['.output/server/index.mjs'], {
 		env: {
 			...process.env,
+			NODE_ENV: 'test',
+			NUXT_PUBLIC_SENTRY_DISABLED: 'true',
 			PORT: String(APP_PORT),
 			HOST: '127.0.0.1',
 			NUXT_DATA_DIR: dataDir,
