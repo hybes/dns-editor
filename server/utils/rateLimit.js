@@ -1,5 +1,5 @@
 import { createError, getRequestIP } from 'h3'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Slows password guessing: a fixed number of attempts per key in a window, counted in memory.
 // A restart clears the counts, which is fine for a single self-hosted server.
@@ -26,7 +26,7 @@ export function limitAttempts(key, { limit, windowMs }) {
 	if (bucket.count > limit) {
 		const minutes = Math.ceil((bucket.resetAt - now) / 60_000)
 		// Once per key and window: a burst of guesses is one line, with the count.
-		log.warn('auth', `rate limit hit for ${key} (${bucket.count} attempts, limit ${limit})`, {
+		log.warn('auth', logText`rate limit hit for ${key} (${bucket.count} attempts, limit ${limit})`, {
 			key,
 			attempts: bucket.count,
 			limit,

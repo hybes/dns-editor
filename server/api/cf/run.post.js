@@ -5,7 +5,7 @@ import { buildCfRequest, describeCfRequest, requireCfCommand, sendCfRequest } fr
 import { describeCfErrors, invalidateCfCache } from '../../utils/cfFetch'
 import { forgetRenewals } from '../../utils/renewals'
 import { refusal } from '../../utils/access'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 import { consoleRunFacts } from '../../../shared/utils/sentry'
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -86,7 +86,7 @@ export default defineEventHandler(async (event) => {
 		if (response?.success && command.method !== 'GET') {
 			invalidateCfCache({ apiKey })
 			if (command.command.startsWith('registrar ')) forgetRenewals()
-			log.info('console', `${user?.username} ran ${command.command} (${command.method} ${request.path})`, {
+			log.info('console', logText`${user?.username} ran ${command.command} (${command.method} ${request.path})`, {
 				...outcome,
 				outcome: 'success'
 			})
@@ -94,7 +94,7 @@ export default defineEventHandler(async (event) => {
 			const errors = describeCfErrors(response)
 			log.warn(
 				'console',
-				`${user?.username} ran ${command.command}: Cloudflare refused it (${errors || 'no detail'})`,
+				logText`${user?.username} ran ${command.command}: Cloudflare refused it (${errors || 'no detail'})`,
 				{
 					...outcome,
 					outcome: 'refused',

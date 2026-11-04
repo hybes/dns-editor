@@ -3,7 +3,7 @@ import { readJsonBody } from '../utils/readJsonBody'
 import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 export default defineEventHandler(async (event) => {
 	try {
@@ -27,12 +27,16 @@ export default defineEventHandler(async (event) => {
 		// Drop cached record lists so the next load can't bring the deleted record back.
 		if (result?.success) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
-			log.info('dns', `${facts.username} deleted record ${recordId} in zone ${zoneId}`, facts)
+			log.info('dns', logText`${facts.username} deleted record ${recordId} in zone ${zoneId}`, facts)
 		} else {
-			log.warn('dns', `delete of record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`, {
-				...facts,
-				cfErrors: describeCfErrors(result)
-			})
+			log.warn(
+				'dns',
+				logText`delete of record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
+				{
+					...facts,
+					cfErrors: describeCfErrors(result)
+				}
+			)
 		}
 
 		return result

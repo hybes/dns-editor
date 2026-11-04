@@ -3,7 +3,7 @@ import { listZones } from './cfLists'
 import { connectionsWithTokens, tokenFor } from './connections'
 import { sharedZones } from './shares'
 import { allows } from '#shared/utils/access'
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Renewal dates, auto-renew and prices for the Zones list, for the account's own zones and for
 // zones shared with it.
@@ -69,7 +69,7 @@ async function priceDomains(token, account, domains) {
 		}).catch((error) => {
 			log.warn(
 				'renewals',
-				`price check for ${names.length} names in account ${account} failed: ${error?.message}`,
+				logText`price check for ${names.length} names in account ${account} failed: ${error?.message}`,
 				{
 					accountId: account,
 					names: names.slice(index, index + CHECK_BATCH),
@@ -149,7 +149,7 @@ async function sharedRenewals(userId, own) {
 			else if (item.showPrices && account) Object.assign(prices, await priceDomains(token, account, [domain]))
 		} catch (error) {
 			// Left out: the owner's connection couldn't read it.
-			log.warn('renewals', `couldn’t read shared registration ${item.zoneName}: ${error?.message}`, {
+			log.warn('renewals', logText`couldn’t read shared registration ${item.zoneName}: ${error?.message}`, {
 				zoneId: item.zoneId,
 				zoneName: item.zoneName,
 				error

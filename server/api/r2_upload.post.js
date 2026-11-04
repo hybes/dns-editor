@@ -3,7 +3,7 @@ import { sendCfRequest } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
 import { buildObjectRequest, findZoneBucket, readObjectKey, TRANSFER_TIMEOUT_MS } from '../utils/r2Files'
 import { describeCfErrors } from '../utils/cfFetch'
-import { log, msSince } from '../../shared/utils/log'
+import { log, logText, msSince } from '../../shared/utils/log'
 
 // Uploads one file to the zone's R2 bucket with `r2 objects put`. The body is the file's
 // bytes, so everything else comes in the query, and the token from the signed-in account's
@@ -73,13 +73,13 @@ export default defineEventHandler(async (event) => {
 		if (result?.success) {
 			log.info(
 				'files',
-				`${facts.username} uploaded ${key} (${body.length} bytes) to ${target.bucket} in ${facts.durationMs} ms`,
+				logText`${facts.username} uploaded ${key} (${body.length} bytes) to ${target.bucket} in ${facts.durationMs} ms`,
 				facts
 			)
 		} else {
 			log.warn(
 				'files',
-				`upload of ${key} (${body.length} bytes) to ${target.bucket} failed: ${describeCfErrors(result)}`,
+				logText`upload of ${key} (${body.length} bytes) to ${target.bucket} failed: ${describeCfErrors(result)}`,
 				{
 					...facts,
 					cfErrors: describeCfErrors(result)

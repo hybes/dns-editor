@@ -1,4 +1,4 @@
-import { log } from '../../shared/utils/log'
+import { log, logText } from '../../shared/utils/log'
 
 // Registration Data Access Protocol lookups: the registry-backed replacement for WHOIS.
 // A 404 from the registry's RDAP server is the strongest public signal that a name is
@@ -72,7 +72,7 @@ const loadBootstrap = async () => {
 			const message = describeBootstrapError(error)
 			log.warn(
 				'rdap',
-				`IANA RDAP directory unavailable${state.bootstrap?.map ? ', using the stale copy' : ''}: ${message}`,
+				logText`IANA RDAP directory unavailable${state.bootstrap?.map ? ', using the stale copy' : ''}: ${message}`,
 				{
 					url: BOOTSTRAP_URL,
 					stale: Boolean(state.bootstrap?.map),
@@ -176,7 +176,7 @@ const lookup = async (domain) => {
 
 		if (response.status === 404) return { supported: true, available: true }
 		if (response.status === 429) {
-			log.warn('rdap', `${new URL(server).host} rate-limited the lookup of ${domain}`, {
+			log.warn('rdap', logText`${new URL(server).host} rate-limited the lookup of ${domain}`, {
 				domain,
 				server,
 				'http.status_code': 429,
@@ -189,7 +189,7 @@ const lookup = async (domain) => {
 			}
 		}
 		if (!response.ok) {
-			log.warn('rdap', `${new URL(server).host} answered ${response.status} for ${domain}`, {
+			log.warn('rdap', logText`${new URL(server).host} answered ${response.status} for ${domain}`, {
 				domain,
 				server,
 				'http.status_code': response.status,
@@ -206,7 +206,12 @@ const lookup = async (domain) => {
 		return { supported: true, ...parseRegistered(data) }
 	} catch (error) {
 		const message = error?.name === 'AbortError' ? 'The registry did not respond in time' : error?.message
-		log.warn('rdap', `lookup of ${domain} at ${server} failed: ${message}`, { domain, server, error, once: server })
+		log.warn('rdap', logText`lookup of ${domain} at ${server} failed: ${message}`, {
+			domain,
+			server,
+			error,
+			once: server
+		})
 		return { supported: true, available: null, reason: message || 'RDAP lookup failed' }
 	}
 }

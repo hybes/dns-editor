@@ -1,5 +1,5 @@
 import { getRequestHeader } from 'h3'
-import { log } from '../../shared/utils/log'
+import { log, logText, logValue } from '../../shared/utils/log'
 
 // Start-up checks and one log line for each failed API request. Uncaught errors still become
 // GlitchTip issues through the Sentry module; these lines put them in the log feed with the
@@ -19,7 +19,7 @@ function checkConfig() {
 	if (!config.tokenKey) {
 		log.warn(
 			'startup',
-			`NUXT_TOKEN_KEY isn’t set, so Cloudflare tokens are encrypted with token.key in ${config.dataDir}`,
+			logText`NUXT_TOKEN_KEY isn’t set, so Cloudflare tokens are encrypted with token.key in ${config.dataDir}`,
 			facts
 		)
 	} else if (Buffer.from(config.tokenKey, 'base64').length !== 32) {
@@ -30,7 +30,7 @@ function checkConfig() {
 	}
 	log.info(
 		'startup',
-		`server started on ${process.version} (data in ${config.dataDir}, AI editor ${facts.aiEditor ? 'on' : 'off'})`,
+		logText`server started on ${process.version} (data in ${config.dataDir}, AI editor ${facts.aiEditor ? 'on' : 'off'})`,
 		facts
 	)
 }
@@ -39,7 +39,7 @@ export default defineNitroPlugin((nitroApp) => {
 	try {
 		checkConfig()
 	} catch (error) {
-		log.error('startup', `config check failed: ${error?.message}`, { error })
+		log.error('startup', logText`config check failed: ${error?.message}`, { error })
 	}
 
 	nitroApp.hooks.hook('error', (error, { event } = {}) => {
@@ -49,7 +49,7 @@ export default defineNitroPlugin((nitroApp) => {
 			const method = event?.method || ''
 			if (status < 500 && (status !== 400 || QUIET_PATHS.test(path))) return
 			const user = event?.context?.user
-			const message = error?.message || 'Unknown error'
+			const message = logValue(error?.message || 'Unknown error')
 			const facts = {
 				method,
 				path,
@@ -68,8 +68,12 @@ export default defineNitroPlugin((nitroApp) => {
 			// The same failure on the same route is one line a minute, with a count.
 			const repeat = { once: `${method} ${path} ${status} ${message.slice(0, 120)}`, windowMs: 60_000 }
 			if (status >= 500)
-				log.error('api', `${method} ${path} failed ${status}${who}: ${message}`, { ...facts, ...repeat })
-			else log.warn('api', `${method} ${path} rejected ${status}${who}: ${message}`, { ...facts, ...repeat })
+				log.error('api', logText`${method} ${path} failed ${status}${who}: ${message}`, { ...facts, ...repeat })
+			else
+				log.warn('api', logText`${method} ${path} rejected ${status}${who}: ${message}`, {
+					...facts,
+					...repeat
+				})
 		} catch {
 			// Never let logging turn one error into two.
 		}

@@ -3,7 +3,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { ownZoneNames } from '../../utils/connections'
 import { createShare, readShareZones, updateShare } from '../../utils/shares'
 import { forgetRenewals } from '../../utils/renewals'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Creates a share, or updates one when `id` is given. Body: { id?, label, defaults: { area:
 // level }, showPrices, zones: [{ id, overrides?: { area: level }, price?: { amount, currency } }] }.
@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
 		forgetRenewals()
 		log.info(
 			'sharing',
-			`${event.context.user.username} updated share ${Number(body.id)} “${label}” (${zones.length} domains)`,
+			logText`${event.context.user.username} updated share ${Number(body.id)} “${label}” (${zones.length} domains)`,
 			{
 				...facts,
 				shareId: Number(body.id)
@@ -40,9 +40,13 @@ export default defineEventHandler(async (event) => {
 	}
 	const { id, inviteToken } = createShare(userId, share)
 	forgetRenewals()
-	log.info('sharing', `${event.context.user.username} shared ${zones.length} domains with “${label}” (share ${id})`, {
-		...facts,
-		shareId: id
-	})
+	log.info(
+		'sharing',
+		logText`${event.context.user.username} shared ${zones.length} domains with “${label}” (share ${id})`,
+		{
+			...facts,
+			shareId: id
+		}
+	)
 	return { success: true, errors: [], messages: [], result: { id, inviteToken } }
 })

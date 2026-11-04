@@ -3,7 +3,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { checkPassword } from '../../utils/accounts'
 import { clearAttempts, clientIp, limitAttempts } from '../../utils/rateLimit'
 import { startSession } from '../../utils/session'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Signs in with a username and password. Body: { username, password }. Ten tries per username
 // from one address in 15 minutes, and 50 from one address across all usernames.
@@ -20,11 +20,16 @@ export default defineEventHandler(async (event) => {
 	limitAttempts(`login:${ip}`, { limit: 50, windowMs: 15 * 60_000 })
 	const user = await checkPassword(username, password)
 	if (!user) {
-		log.warn('auth', `failed sign-in for ${username} from ${ip}`, { username, ip, once: key, windowMs: 60_000 })
+		log.warn('auth', logText`failed sign-in for ${username} from ${ip}`, {
+			username,
+			ip,
+			once: key,
+			windowMs: 60_000
+		})
 		throw createError({ statusCode: 401, message: 'That username and password don’t match.' })
 	}
 	clearAttempts(key)
 	startSession(event, user.id)
-	log.info('auth', `${user.username} signed in from ${ip}`, { userId: user.id, username: user.username, ip })
+	log.info('auth', logText`${user.username} signed in from ${ip}`, { userId: user.id, username: user.username, ip })
 	return { success: true, errors: [], messages: [], result: { user } }
 })

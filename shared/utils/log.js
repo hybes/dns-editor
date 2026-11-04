@@ -2,18 +2,19 @@ import * as Sentry from '@sentry/nuxt'
 import { echoToConsole, scrub, scrubString } from './sentry.js'
 
 // The app's logger, for the browser and the server. Each line goes to GlitchTip's log feed as
-// "[dns-editor] <area>: <what happened>", with the same facts as attributes, and to the
-// console. Use warn and error for anything that went wrong or fell back, info only for notable
-// events (an account made, a record changed, a domain registered), never per request.
+// "<area>: <what happened>", with the same facts as attributes, and to the console. GlitchTip
+// shows the Service (dns-editor) beside every line, so the text doesn't repeat it. Use warn and
+// error for anything that went wrong or fell back, info only for notable events (an account
+// made, a record changed, a domain registered), never per request.
 //
-//   log.warn('cloudflare', `GET ${path} timed out after ${ms} ms`, { path, durationMs: ms })
+//   log.warn('cloudflare', logText`GET ${path} timed out after ${ms} ms`, { path, durationMs: ms })
+//
+// Write messages with the `logText` tag: it turns each value into text without ever throwing, so a
+// request body field such as {"toString": 1} can't break the request it describes.
 //
 // `once` names a line to send at most once per `windowMs` (ten minutes by default); later
 // copies within the window are counted and reported as `suppressed` on the next one.
 
-// Written out rather than built from SERVICE_NAME: the server bundle can evaluate this module
-// before sentry.js, and a top-level read of its constant would crash start-up.
-const PREFIX = '[dns-editor]'
 const DEFAULT_WINDOW_MS = 10 * 60_000
 const MAX_THROTTLE_KEYS = 500
 const throttled = new Map()
@@ -33,17 +34,52 @@ function allow(key, windowMs) {
 	return { suppressed: entry?.suppressed || 0 }
 }
 
+const MAX_VALUE_LENGTH = 1000
+
+const json = (value) => {
+	try {
+		return (JSON.stringify(value) ?? '').slice(0, MAX_VALUE_LENGTH)
+	} catch {
+		return '[unreadable]'
+	}
+}
+
+// Any value as text, for log lines and attributes. Never throws: values from request bodies,
+// headers and Cloudflare answers can be objects whose toString is missing or broken.
+export function logValue(value) {
+	try {
+		if (typeof value === 'string') return value
+		if (typeof value === 'function') return '[function]'
+		if (value === null || value === undefined || typeof value !== 'object') return String(value)
+		if (value instanceof Error) return logValue(value.message)
+		if (Array.isArray(value)) {
+			const items = value.map((item) => (item !== null && typeof item === 'object' ? json(item) : logValue(item)))
+			return items.join(', ').slice(0, MAX_VALUE_LENGTH)
+		}
+		return json(value)
+	} catch {
+		return '[unreadable]'
+	}
+}
+
+// A template tag for log messages: logText`${username} created ${type} ${name}`.
+export function logText(strings, ...values) {
+	let result = strings[0]
+	for (let index = 0; index < values.length; index++) result += logValue(values[index]) + strings[index + 1]
+	return result
+}
+
 // Error objects become their message, name, code and stack, which Sentry can't serialise alone.
 export function errorFacts(error) {
 	if (!error) return {}
-	if (typeof error !== 'object') return { 'error.message': String(error) }
-	const facts = { 'error.type': error.name || 'Error', 'error.message': String(error.message ?? error) }
+	if (typeof error !== 'object') return { 'error.message': logValue(error) }
+	const facts = { 'error.type': logValue(error.name || 'Error'), 'error.message': logValue(error.message ?? error) }
 	const code = error.code ?? error.cause?.code
-	if (code !== undefined) facts['error.code'] = String(code)
+	if (code !== undefined) facts['error.code'] = logValue(code)
 	const status = error.statusCode ?? error.status
 	if (Number.isFinite(status)) facts['http.status_code'] = status
-	if (error.stack) facts['error.stack'] = String(error.stack).slice(0, 4000)
-	if (error.cause?.message) facts['error.cause'] = String(error.cause.message)
+	if (error.stack) facts['error.stack'] = logValue(error.stack).slice(0, 4000)
+	if (error.cause?.message) facts['error.cause'] = logValue(error.cause.message)
 	return facts
 }
 
@@ -52,8 +88,9 @@ function flatten(attributes) {
 	for (const [key, value] of Object.entries(attributes || {})) {
 		if (value === undefined || value === null || value === '') continue
 		if (value instanceof Error) Object.assign(result, errorFacts(value))
-		else if (Array.isArray(value)) result[key] = value.length <= 20 ? value.join(', ') : `${value.length} items`
-		else if (typeof value === 'object') result[key] = JSON.stringify(scrub(value)).slice(0, 2000)
+		else if (Array.isArray(value)) result[key] = value.length <= 20 ? logValue(value) : `${value.length} items`
+		else if (typeof value === 'object') result[key] = logValue(scrub(value)).slice(0, 2000)
+		else if (typeof value === 'symbol' || typeof value === 'function') result[key] = logValue(value)
 		else result[key] = value
 	}
 	return result
@@ -64,13 +101,13 @@ function write(level, area, message, attributes = {}) {
 		const { once, windowMs = DEFAULT_WINDOW_MS, error, ...rest } = attributes
 		let extra = {}
 		if (once) {
-			const allowed = allow(`${level}:${area}:${once}`, windowMs)
+			const allowed = allow(logText`${level}:${area}:${once}`, windowMs)
 			if (!allowed) return
 			if (allowed.suppressed) extra = { suppressed: allowed.suppressed }
 		}
 		const facts = scrub(flatten({ area, ...rest, ...extra, ...(error && errorFacts(error)) }))
 		const suffix = extra.suppressed ? ` (${extra.suppressed} more like this since the last one)` : ''
-		const line = scrubString(`${PREFIX} ${area}: ${message}${suffix}`)
+		const line = scrubString(`${logValue(area)}: ${logValue(message)}${suffix}`)
 		Sentry.logger[level](line, facts)
 		echoToConsole(() => {
 			const method = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info'

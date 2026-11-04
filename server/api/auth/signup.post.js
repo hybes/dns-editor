@@ -3,7 +3,7 @@ import { readJsonBody } from '../../utils/readJsonBody'
 import { createUser, readNewPassword, readUsername } from '../../utils/accounts'
 import { clientIp, limitAttempts } from '../../utils/rateLimit'
 import { startSession } from '../../utils/session'
-import { log } from '../../../shared/utils/log'
+import { log, logText } from '../../../shared/utils/log'
 
 // Creates an account and signs in. Anyone who can reach the site can sign up; each account
 // only ever sees the Cloudflare connections it adds itself. Body: { username, password }.
@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
 	}
 	const user = await createUser(username, password)
 	startSession(event, user.id)
-	log.info('auth', `account ${user.username} created from ${clientIp(event)}`, {
+	log.info('auth', logText`account ${user.username} created from ${clientIp(event)}`, {
 		userId: user.id,
 		username: user.username,
 		ip: clientIp(event)
