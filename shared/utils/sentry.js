@@ -412,6 +412,17 @@ export function echoToConsole(write) {
 	}
 }
 
+// A 3xx or 4xx thrown with h3's createError is the app answering on purpose: sign in, not
+// shared with you, too large. The SDK's own error hook already skips these, but its wrapper
+// around server/middleware reports everything thrown there, so they're dropped here too.
+// Errors that aren't h3's keep being reported whatever status they carry.
+export function isDeliberateHttpError(error) {
+	if (!error || typeof error !== 'object') return false
+	const isH3 = error.constructor?.__h3_error__ === true || error.name === 'HTTPError'
+	const status = Number(error.status ?? error.statusCode)
+	return isH3 && status >= 300 && status < 500
+}
+
 // `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
 export function sentryOptions({ dsn, environment, runtime, host, disabled = false, consoleLogs, http }) {
 	const addAttributes = logAttributesFor({ runtime, host })
@@ -450,7 +461,8 @@ export function sentryOptions({ dsn, environment, runtime, host, disabled = fals
 			...(http ? [http] : []),
 			...(consoleLogs ? [consoleLogs] : [])
 		],
-		beforeSend: sanitizeSentryEvent,
+		beforeSend: (event, hint) =>
+			isDeliberateHttpError(hint?.originalException) ? null : sanitizeSentryEvent(event),
 		beforeSendTransaction: sanitizeSentryEvent,
 		beforeBreadcrumb: (breadcrumb) => scrub(breadcrumb),
 		beforeSendLog: (log) => {

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
 import * as Sentry from '@sentry/nuxt'
+import { wrapMiddlewareHandlerWithSentry } from '../node_modules/@sentry/nuxt/build/module/runtime/hooks/wrapMiddlewareHandler.js'
+import { createError } from 'h3'
 import { log, logText, logValue } from '../shared/utils/log.js'
 import {
 	collectsRequestBody,
@@ -559,4 +561,48 @@ test('the installed SDK never reads a Console request body', async () => {
 	for (const event of byPath('/api/cf/run')) assert.equal(event.request.data, undefined)
 	// The allowlisted route still has its body, which shows capture itself is working.
 	assert.match(JSON.stringify(byPath('/api/create_record')[0].request.data), /www\.example\.com/)
+})
+
+test('refusals thrown by server middleware are not sent as errors; failures still are', async () => {
+	const envelopes = []
+	Sentry.init({
+		...sentryOptions({ dsn: DEFAULT_SENTRY_DSN, environment: 'production', runtime: 'server', host: 'web-1' }),
+		transport: () => ({
+			send: async (envelope) => {
+				envelopes.push(envelope)
+				return { statusCode: 200 }
+			},
+			flush: async () => true
+		})
+	})
+	// The Sentry module wraps every file in server/middleware like this, and reports anything
+	// it throws, including the 401s and 403s server/middleware/auth.js throws on purpose.
+	const thrown = [
+		createError({ statusCode: 401, message: 'Sign in to continue', data: { reason: 'signed_out' } }),
+		createError({ statusCode: 403, message: 'That domain isn’t shared with you.', data: { reason: 'not_shared' } }),
+		createError({ statusCode: 413, message: 'That request is too large.' }),
+		createError({ statusCode: 502, message: 'Cloudflare is unreachable' }),
+		createError({ statusCode: 500, message: 'Token store unreadable', cause: new Error('bad key') }),
+		new TypeError('ownsZone is not a function'),
+		// Not an h3 error, so its statusCode proves nothing about what went wrong.
+		Object.assign(new Error('Upstream library said 404'), { statusCode: 404 })
+	]
+	for (const error of thrown) {
+		const handler = wrapMiddlewareHandlerWithSentry(() => {
+			throw error
+		}, 'auth')
+		await assert.rejects(handler({ path: '/api/records', method: 'POST', node: { req: { headers: {} } } }))
+	}
+	assert.equal(await Sentry.flush(2000), true)
+	await Sentry.close(2000)
+	const sent = envelopes
+		.flatMap(([, items]) => items)
+		.filter(([header]) => header.type === 'event')
+		.map(([, event]) => event.exception.values.at(-1).value)
+	assert.deepEqual(sent.sort(), [
+		'Cloudflare is unreachable',
+		'Token store unreadable',
+		'Upstream library said 404',
+		'ownsZone is not a function'
+	])
 })
