@@ -100,8 +100,9 @@ const pathOnly = (url) => String(url).split('?')[0]
 // permission the pages already explain, so they aren't logged.
 function noteResponse({ method, url, response, data, started }) {
 	const status = response.status
-	// Some deletes answer 204 with no body at all, which is still a success.
-	if (!data && response.ok) return
+	// Some deletes answer 204 with no body at all, which is still a success. A 200 whose body
+	// isn't JSON (an HTML error page from a proxy, say) is worth a warning.
+	if (!data && response.ok && (status === 204 || response.headers.get('content-length') === '0')) return
 	const refusedWrite = method !== 'GET' && method !== 'HEAD' && (!response.ok || data?.success === false)
 	if (status < 500 && status !== 429 && data && !refusedWrite) return
 	const path = pathOnly(url)
@@ -145,17 +146,17 @@ const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 			})
 			return null
 		}
-		log.error(
-			'cloudflare',
-			`${method} ${pathOnly(path)} couldn’t connect: ${error?.cause?.code || error?.message}`,
-			{
-				method,
-				path: pathOnly(path),
-				url: path,
-				durationMs: msSince(started),
-				error
-			}
-		)
+		const reason = error?.cause?.code || error?.message
+		// Once a minute per cause: an outage is one line with a count, not one per request.
+		log.error('cloudflare', `${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
+			method,
+			path: pathOnly(path),
+			url: path,
+			durationMs: msSince(started),
+			error,
+			once: `connect ${reason}`,
+			windowMs: 60_000
+		})
 		throw error
 	}
 }

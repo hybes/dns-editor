@@ -103,14 +103,23 @@ const isUrlSecret = (key) =>
 			.replace(/[^a-z]/g, '')
 	)
 
-// "name": "value" pairs inside text that isn't valid JSON on its own.
-const JSON_PAIR = /("([^"\\]{1,80})"\s*:\s*)("(?:[^"\\]|\\.)*"|-?\d+)/g
+// "name": "value" pairs inside text that isn't valid JSON on its own, such as a request body
+// the SDK cut short: a value that runs to the end of the text has no closing quote.
+const JSON_PAIR = /("([^"\\]{1,80})"\s*:\s*)("(?:[^"\\]|\\.)*(?:"|\\?$)|-?\d+)/g
 // name=value in query strings, form bodies and url.query attributes, at the start or after ?&;
-const QUERY_PAIR = /(^|[?&;\s])([\w.[\]-]{1,80})=([^&#\s"';]*)/g
+// Names may be percent-encoded (%6ftp is otp), so they are decoded before matching.
+const QUERY_PAIR = /(^|[?&;\s])([\w.[\]%+-]{1,120})=([^&#\s"';]*)/g
+const decodeName = (key) => {
+	try {
+		return decodeURIComponent(key.replace(/\+/g, ' '))
+	} catch {
+		return key
+	}
+}
 // A secret after any label: "Error: password=hunter2", "otp: 482913", "MFA code: 123456".
 // A bare token= is left to QUERY_PAIR, so prose such as "token: rejected" survives.
 const TEXT_PAIR =
-	/((?<![\w-])(?:pass(?:word|wd|phrase)?|pwd|secret|client[_-]?secret|api[_-]?key|x-api-key|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?id|otp|totp|(?:mfa|2fa|two[_-]?factor|verification|one[_ -]?time|recovery|backup|security)[_ -]?(?:code|password|pin)s?|private[_-]?key|signature)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&,;"')}\]=:[][^\s&,;"')}\]]*)/gi
+	/((?<![\w-])(?:pass(?:word|wd|phrase)?|pwd|secret|client[_-]?secret|api[_-]?key|x-api-key|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?id|otp|totp|(?:mfa|2fa|two[_-]?factor|verification|one[_ -]?time|recovery|backup|security)[_ -]?(?:code|password|pin)s?|private[_-]?key|signature)\b["']?\s*[=:]\s*)("[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s&,;"')}\]=:[][^\s&,;"')}\]]*)/gi
 const BOUND_TEXT =
 	/(\b(?:parameters|params|bindings|binds|bound parameters|with values)\s*[:=]?\s*)(\[[^\]]*\]|\{[^}]*\}|\([^)]*\))/gi
 const BEARER = /\b(Bearer|Basic)\s+[\w~+/.=-]{8,}/gi
@@ -152,7 +161,7 @@ export function scrubString(value, depth = 0, copies = new Map()) {
 		.replace(BEARER, `$1 ${REDACTED}`)
 		.replace(JSON_PAIR, (match, prefix, key) => (isSecretKey(key) ? `${prefix}"${REDACTED}"` : match))
 		.replace(QUERY_PAIR, (match, start, key, found) =>
-			found && isUrlSecret(key) ? `${start}${key}=${REDACTED}` : match
+			found && isUrlSecret(decodeName(key)) ? `${start}${key}=${REDACTED}` : match
 		)
 		.replace(TEXT_PAIR, `$1${REDACTED}`)
 		.replace(BOUND_TEXT, `$1${REDACTED}`)

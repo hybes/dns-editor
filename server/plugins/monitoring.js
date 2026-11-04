@@ -65,8 +65,11 @@ export default defineNitroPlugin((nitroApp) => {
 				error: status >= 500 ? (error?.cause instanceof Error ? error.cause : error) : undefined
 			}
 			const who = user ? ` for ${user.username}` : ''
-			if (status >= 500) log.error('api', `${method} ${path} failed ${status}${who}: ${message}`, facts)
-			else log.warn('api', `${method} ${path} rejected ${status}${who}: ${message}`, facts)
+			// The same failure on the same route is one line a minute, with a count.
+			const repeat = { once: `${method} ${path} ${status} ${message.slice(0, 120)}`, windowMs: 60_000 }
+			if (status >= 500)
+				log.error('api', `${method} ${path} failed ${status}${who}: ${message}`, { ...facts, ...repeat })
+			else log.warn('api', `${method} ${path} rejected ${status}${who}: ${message}`, { ...facts, ...repeat })
 		} catch {
 			// Never let logging turn one error into two.
 		}

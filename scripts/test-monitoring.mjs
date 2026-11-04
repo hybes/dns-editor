@@ -334,3 +334,13 @@ test('database driver errors lose their bound parameters', () => {
 	assert.equal(safe.contexts.db.bindings, '[redacted]')
 	assert.equal(safe.contexts.db.params, '[redacted]')
 })
+
+test('cut-short bodies and percent-encoded names still lose their secrets', () => {
+	// The SDK truncates captured bodies, which can end inside a secret value.
+	const cut = '{"username":"ben","current":"correct horse batt'
+	assert.equal(scrubString(cut), '{"username":"ben","current":"[redacted]"')
+	assert.equal(scrubString('Error: password="correct horse batt'), 'Error: password=[redacted]')
+	assert.equal(scrubString('/reset?%6ftp=482913&page=2'), '/reset?%6ftp=[redacted]&page=2')
+	assert.equal(scrubString('/x?api%2Dkey=k1&access%5Ftoken=t1'), '/x?api%2Dkey=[redacted]&access%5Ftoken=[redacted]')
+	assert.equal(scrubString('/x?zone%5Bid%5D=abc'), '/x?zone%5Bid%5D=abc')
+})

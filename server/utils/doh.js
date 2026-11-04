@@ -86,6 +86,14 @@ export async function dohQuery({ resolver = 'cloudflare', name, type = 'A', time
 			signal: controller.signal
 		})
 		if (!response.ok) {
+			log.warn('doh', `${config.label} answered ${response.status} for ${type} ${name}`, {
+				resolver,
+				name,
+				type,
+				'http.status_code': response.status,
+				durationMs: Date.now() - startedAt,
+				once: `${resolver} ${response.status}`
+			})
 			return {
 				ok: false,
 				error: `${config.label} responded with HTTP ${response.status}`,
