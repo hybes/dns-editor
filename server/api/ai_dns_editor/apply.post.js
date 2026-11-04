@@ -4,6 +4,7 @@ import { buildCloudflareDnsPayload } from '../../utils/dnsEditor'
 import { isCloudflareId, readId } from '../../utils/ids'
 import { invalidateCfCache } from '../../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../../utils/cfCommand'
+import { log } from '../../../shared/utils/log'
 
 const MAX_CHANGES = 100
 
@@ -124,6 +125,28 @@ export default defineEventHandler(async (event) => {
 		if (created + updated > 0) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
 		}
+		const facts = {
+			zoneId,
+			zoneName: zoneData.result.name,
+			created,
+			updated,
+			failed: failures.length,
+			failures: failures.map(
+				(item) => `${item.action} ${item.type} ${item.name}: ${item.code ?? ''} ${item.message}`
+			),
+			userId: event.context.user?.id,
+			username: event.context.user?.username
+		}
+		const summary = `${created} created, ${updated} updated, ${failures.length} failed`
+		if (failures.length) {
+			log.warn(
+				'ai-editor',
+				`applied changes to ${zoneData.result.name} with failures (${summary}): ${failures[0].message}`,
+				facts
+			)
+		} else {
+			log.info('ai-editor', `${facts.username} applied changes to ${zoneData.result.name} (${summary})`, facts)
+		}
 
 		// success:false whenever any change failed, so a partial apply can't pass for a full one.
 		// The per-change results carry each reason.
@@ -143,6 +166,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `Couldn’t apply the changes: ${error?.message || 'unknown error'}`
 		})
 	}

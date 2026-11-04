@@ -1,9 +1,10 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { invalidateCfCache } from '../utils/cfFetch'
+import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { buildRecordBody } from '../utils/dnsRecordBody'
 import { readId } from '../utils/ids'
+import { log } from '../../shared/utils/log'
 
 export default defineEventHandler(async (event) => {
 	try {
@@ -26,8 +27,25 @@ export default defineEventHandler(async (event) => {
 			body: buildRecordBody(body.dns)
 		})
 
+		const record = result?.result || body.dns || {}
+		const facts = {
+			zoneId,
+			recordId,
+			recordType: record.type,
+			recordName: record.name,
+			content: record.content,
+			proxied: record.proxied,
+			userId: event.context.user?.id,
+			username: event.context.user?.username
+		}
 		if (result?.success) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
+			log.info('dns', `${facts.username} updated ${record.type} ${record.name} in zone ${zoneId}`, facts)
+		} else {
+			log.warn('dns', `update of record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`, {
+				...facts,
+				cfErrors: describeCfErrors(result)
+			})
 		}
 
 		return result
@@ -35,6 +53,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `Couldn’t save the record: ${error?.message || 'Unknown error'}`
 		})
 	}

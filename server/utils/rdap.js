@@ -1,3 +1,5 @@
+import { log } from '../../shared/utils/log'
+
 // Registration Data Access Protocol lookups: the registry-backed replacement for WHOIS.
 // A 404 from the registry's RDAP server is the strongest public signal that a name is
 // unregistered; a 200 carries the registrar, dates and status of a registered name.
@@ -68,6 +70,15 @@ const loadBootstrap = async () => {
 			return map
 		} catch (error) {
 			const message = describeBootstrapError(error)
+			log.warn(
+				'rdap',
+				`IANA RDAP directory unavailable${state.bootstrap?.map ? ', using the stale copy' : ''}: ${message}`,
+				{
+					url: BOOTSTRAP_URL,
+					stale: Boolean(state.bootstrap?.map),
+					error
+				}
+			)
 			state.bootstrapFailure = { message, until: Date.now() + BOOTSTRAP_FAILURE_TTL }
 			// Keep serving a stale copy rather than failing every search while IANA is unreachable.
 			if (state.bootstrap?.map) return state.bootstrap.map
@@ -165,6 +176,12 @@ const lookup = async (domain) => {
 
 		if (response.status === 404) return { supported: true, available: true }
 		if (response.status === 429) {
+			log.warn('rdap', `${new URL(server).host} rate-limited the lookup of ${domain}`, {
+				domain,
+				server,
+				'http.status_code': 429,
+				once: server
+			})
 			return {
 				supported: true,
 				available: null,
@@ -172,6 +189,12 @@ const lookup = async (domain) => {
 			}
 		}
 		if (!response.ok) {
+			log.warn('rdap', `${new URL(server).host} answered ${response.status} for ${domain}`, {
+				domain,
+				server,
+				'http.status_code': response.status,
+				once: `${server} ${response.status}`
+			})
 			return { supported: true, available: null, reason: `The registry responded with HTTP ${response.status}` }
 		}
 
@@ -183,6 +206,7 @@ const lookup = async (domain) => {
 		return { supported: true, ...parseRegistered(data) }
 	} catch (error) {
 		const message = error?.name === 'AbortError' ? 'The registry did not respond in time' : error?.message
+		log.warn('rdap', `lookup of ${domain} at ${server} failed: ${message}`, { domain, server, error, once: server })
 		return { supported: true, available: null, reason: message || 'RDAP lookup failed' }
 	}
 }

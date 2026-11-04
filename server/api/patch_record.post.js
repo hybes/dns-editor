@@ -1,8 +1,9 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
-import { invalidateCfCache } from '../utils/cfFetch'
+import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
 import { cfCommand, cfCommandPath } from '../utils/cfCommand'
 import { readId } from '../utils/ids'
+import { log } from '../../shared/utils/log'
 
 // Fields a partial update (cf's `edit`, a PATCH) may send. It leaves everything else on the record (tags,
 // settings, comment) untouched, where a full PUT would overwrite what it isn't given.
@@ -48,8 +49,33 @@ export default defineEventHandler(async (event) => {
 			body: changes
 		})
 
+		const facts = {
+			zoneId,
+			recordId,
+			recordType: result?.result?.type,
+			recordName: result?.result?.name,
+			fields: Object.keys(changes),
+			changes,
+			userId: event.context.user?.id,
+			username: event.context.user?.username
+		}
+		const fields = Object.keys(changes).join(', ')
 		if (result?.success) {
 			invalidateCfCache({ apiKey: body.apiKey, paths: [await cfCommandPath('zones get', { zone: zoneId })] })
+			log.info(
+				'dns',
+				`${facts.username} changed ${fields} on ${facts.recordType} ${facts.recordName} in zone ${zoneId}`,
+				facts
+			)
+		} else {
+			log.warn(
+				'dns',
+				`change of ${fields} on record ${recordId} in zone ${zoneId} refused: ${describeCfErrors(result)}`,
+				{
+					...facts,
+					cfErrors: describeCfErrors(result)
+				}
+			)
 		}
 
 		return result
@@ -57,6 +83,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: `Couldn’t update the DNS record: ${error?.message || 'unknown error'}`
 		})
 	}

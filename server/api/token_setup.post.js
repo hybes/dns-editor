@@ -5,6 +5,8 @@ import { appTokenPolicies, pickAllPermissionGroups, pickAppPermissionGroups } fr
 import { addConnection, describeConnection, userConnections } from '../utils/connections'
 import { connectionLabel } from '../utils/connectionLabel'
 import { readToken } from '../utils/tokenCheck'
+import { describeCfErrors } from '../utils/cfFetch'
+import { log } from '../../shared/utils/log'
 
 // Makes DNS Manager's token from a one-off token that can create tokens (Cloudflare's "Create
 // Additional Tokens" template, User API Tokens Edit), so nobody has to pick 20 permissions by hand.
@@ -24,6 +26,15 @@ const CHECK_DELAYS_MS = [0, 1000, 2500]
 
 const badRequest = (statusMessage) => createError({ statusCode: 400, message: statusMessage })
 const failure = (message, reason) => ({ success: false, reason, errors: [{ message }], messages: [], result: null })
+
+// Each failed step of making the token is a warning with the account and the reason.
+const noteFailure = (event, reason, detail, facts = {}) =>
+	log.warn('token-setup', `${event.context.user?.username}: ${reason}${detail ? ` (${detail})` : ''}`, {
+		userId: event.context.user?.id,
+		username: event.context.user?.username,
+		reason,
+		...facts
+	})
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const describe = ({ name, scope, use }) => ({ name, scope, use })
@@ -38,6 +49,7 @@ export default defineEventHandler(async (event) => {
 
 		const groups = await cfCommand({ apiKey, command: 'user tokens permission-groups list' })
 		if (!groups?.success) {
+			noteFailure(event, 'cannot_create', describeCfErrors(groups))
 			return failure(
 				'This token can’t create other tokens. Make one from Cloudflare’s Create Additional Tokens template, or paste a token with DNS Manager’s permissions.',
 				'cannot_create'
@@ -46,6 +58,7 @@ export default defineEventHandler(async (event) => {
 		const app = pickAppPermissionGroups(groups.result)
 		const all = pickAllPermissionGroups(groups.result)
 		if (!app.picked.length) {
+			noteFailure(event, 'no_permissions', `${groups.result?.length} groups offered`)
 			return failure('Cloudflare didn’t offer any of the permissions DNS Manager uses.', 'no_permissions')
 		}
 
@@ -75,6 +88,7 @@ export default defineEventHandler(async (event) => {
 		})
 		const token = created?.success ? created.result?.value : ''
 		if (!token) {
+			noteFailure(event, 'create_failed', describeCfErrors(created), { coverage })
 			return created?.success === false
 				? created
 				: failure('Cloudflare didn’t return the new token.', 'create_failed')
@@ -103,6 +117,16 @@ export default defineEventHandler(async (event) => {
 		}
 		if (!works) {
 			const removed = await removeCreated()
+			noteFailure(
+				event,
+				'verification_failed',
+				`new token couldn’t list zones; unused token ${removed ? 'deleted' : 'left in Cloudflare'}`,
+				{
+					coverage,
+					cfTokenId: created.result?.id,
+					removed
+				}
+			)
 			return failure(
 				`Cloudflare created a token, but it couldn’t list your zones. No connection was added. Your set-up token still works.${removed ? '' : ' Delete the unused DNS Manager token in Cloudflare before trying again.'}`,
 				'verification_failed'
@@ -117,8 +141,18 @@ export default defineEventHandler(async (event) => {
 				label: await connectionLabel(token),
 				cfTokenId: created.result?.id || null
 			})
-		} catch {
+		} catch (error) {
 			const removed = await removeCreated()
+			log.error(
+				'token-setup',
+				`${event.context.user?.username}: couldn’t save the new connection: ${error?.message}`,
+				{
+					userId,
+					cfTokenId: created.result?.id,
+					removed,
+					error
+				}
+			)
 			return failure(
 				`The new connection couldn’t be saved. Your set-up token still works.${removed ? '' : ' Delete the unused DNS Manager token in Cloudflare before trying again.'}`,
 				'save_failed'
@@ -135,6 +169,26 @@ export default defineEventHandler(async (event) => {
 			setupDeleted = Boolean(removed?.success)
 		}
 		const connection = describeConnection(userConnections(userId).find((row) => row.id === id))
+		log.info(
+			'token-setup',
+			`${event.context.user?.username} made a ${coverage} token with ${picked.length} permissions (connection ${id}, set-up token ${setupDeleted ? 'deleted' : 'kept'})`,
+			{
+				userId,
+				username: event.context.user?.username,
+				connectionId: id,
+				coverage,
+				permissions: picked.length,
+				missing: missing.map((item) => item.name),
+				setupDeleted,
+				cfTokenId: created.result?.id
+			}
+		)
+		if (setupId && !setupDeleted) {
+			log.warn('token-setup', `couldn’t delete the set-up token ${setupId} for ${event.context.user?.username}`, {
+				userId,
+				setupTokenId: setupId
+			})
+		}
 		return {
 			success: true,
 			errors: [],
@@ -145,6 +199,7 @@ export default defineEventHandler(async (event) => {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: error?.message || 'Unknown error'
 		})
 	}

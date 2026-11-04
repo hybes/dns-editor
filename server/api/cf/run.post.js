@@ -4,6 +4,7 @@ import { buildCfRequest, describeCfRequest, requireCfCommand, sendCfRequest } fr
 import { invalidateCfCache } from '../../utils/cfFetch'
 import { forgetRenewals } from '../../utils/renewals'
 import { refusal } from '../../utils/access'
+import { log } from '../../../shared/utils/log'
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
 
@@ -69,12 +70,24 @@ export default defineEventHandler(async (event) => {
 		if (response?.success && command.method !== 'GET') {
 			invalidateCfCache({ apiKey })
 			if (command.command.startsWith('registrar ')) forgetRenewals()
+			const user = event.context.user
+			log.info('console', `${user?.username} ran ${command.command} (${command.method} ${request.path})`, {
+				command: command.command,
+				method: command.method,
+				path: request.path,
+				zoneId: request.zoneId,
+				accountId: request.accountId,
+				shared: event.context.access?.shared || undefined,
+				userId: user?.id,
+				username: user?.username
+			})
 		}
 		return { ...response, request: described }
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: error?.message || 'Unknown error'
 		})
 	}

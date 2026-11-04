@@ -2,7 +2,8 @@ import { domainToASCII } from 'node:url'
 import { createError } from 'h3'
 import { readJsonBody } from '../utils/readJsonBody'
 import { buildCfRequest, cfCommand, cfCommandPath, requireCfCommand, sendCfRequest } from '../utils/cfCommand'
-import { invalidateCfCache } from '../utils/cfFetch'
+import { describeCfErrors, invalidateCfCache } from '../utils/cfFetch'
+import { log } from '../../shared/utils/log'
 import { normaliseSearchTerm } from '../utils/domainNames'
 import { readId } from '../utils/ids'
 
@@ -160,6 +161,8 @@ const isUncertain = (envelope) =>
 const UNCERTAIN_ADVICE = 'The registration may still have gone through, so check its status before trying again.'
 
 export default defineEventHandler(async (event) => {
+	const user = event.context.user
+	let facts = { userId: user?.id, username: user?.username }
 	try {
 		const input = await readJsonBody(event)
 		const apiKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : ''
@@ -168,6 +171,16 @@ export default defineEventHandler(async (event) => {
 		const domain = readDomain(input.domain)
 		const quote = readQuote(input.quote)
 		const registration = readRegistration(input.body, domain, quote)
+		facts = {
+			...facts,
+			domain,
+			accountId: account,
+			years: quote.years,
+			currency: quote.currency,
+			registrationCost: quote.registration_cost,
+			renewalCost: quote.renewal_cost
+		}
+		const price = `${quote.registration_cost} ${quote.currency}, ${quote.years} year${quote.years === 1 ? '' : 's'}`
 
 		// Availability and price can change between the quote and now, so check again right
 		// before submitting. A failed check comes back as Cloudflare's envelope, and nothing is sent.
@@ -177,9 +190,25 @@ export default defineEventHandler(async (event) => {
 			account,
 			body: { domains: [domain] }
 		})
-		if (!check?.success) return check
+		if (!check?.success) {
+			log.warn('registrar', `availability check for ${domain} failed: ${describeCfErrors(check)}`, {
+				...facts,
+				cfErrors: describeCfErrors(check)
+			})
+			return check
+		}
 		// Throws a 409 when the domain can't be registered any more or the price has moved.
-		requireRegistrable(check.result?.domains, domain, quote)
+		try {
+			requireRegistrable(check.result?.domains, domain, quote)
+		} catch (error) {
+			log.warn('registrar', `didn’t register ${domain} (${price}): ${error.message}`, {
+				...facts,
+				'http.status_code': error.statusCode,
+				checkReason: error.data?.check?.reason,
+				checkedCost: error.data?.check?.pricing?.registration_cost
+			})
+			throw error
+		}
 
 		// `Prefer: respond-async` makes Cloudflare answer straight away with the workflow's
 		// status (202) instead of holding the connection, which could outlast this server's
@@ -198,6 +227,7 @@ export default defineEventHandler(async (event) => {
 		} catch (error) {
 			throw createError({
 				statusCode: 502,
+				cause: error,
 				message: `Couldn’t confirm whether Cloudflare received the registration (${error?.message || 'network error'}). ${UNCERTAIN_ADVICE}`,
 				data: { uncertain: true }
 			})
@@ -206,19 +236,34 @@ export default defineEventHandler(async (event) => {
 		if (created?.success) {
 			const path = await cfCommandPath('registrar registrations list', { account })
 			invalidateCfCache({ apiKey, paths: [path] })
+			const status = created.result?.status || created.result?.state
+			log.info(
+				'registrar',
+				`${user?.username || 'someone'} registered ${domain} for ${price}${status ? ` (${status})` : ''}`,
+				{
+					...facts,
+					workflowStatus: status
+				}
+			)
 			return created
 		}
 		if (isUncertain(created)) {
 			// cfFetch's timeout message ends "Try again", which is the wrong advice here.
 			const detail = (created.errors?.[0]?.message || '').replace(/\s*Try again\.?\s*$/, '').replace(/\.$/, '')
 			const message = `Cloudflare didn’t confirm the registration${detail ? ` (${detail})` : ''}. ${UNCERTAIN_ADVICE}`
+			log.error('registrar', `registration of ${domain} (${price}) unconfirmed: ${detail || 'no answer'}`, facts)
 			return { ...created, uncertain: true, errors: [{ message }] }
 		}
+		log.warn('registrar', `Cloudflare refused to register ${domain} (${price}): ${describeCfErrors(created)}`, {
+			...facts,
+			cfErrors: describeCfErrors(created)
+		})
 		return created
 	} catch (error) {
 		if (error?.statusCode) throw error
 		throw createError({
 			statusCode: 500,
+			cause: error,
 			message: error?.message || 'Unknown error'
 		})
 	}

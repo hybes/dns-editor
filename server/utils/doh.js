@@ -1,4 +1,5 @@
 import { LOOKUP_RECORD_TYPES } from '#shared/utils/dnsTypes'
+import { log } from '../../shared/utils/log'
 
 // DNS-over-HTTPS (JSON) queries against public resolvers. Used by the DNS lookup tool
 // and, as a registration hint, by the domain search tool. No Cloudflare token is
@@ -105,6 +106,15 @@ export async function dohQuery({ resolver = 'cloudflare', name, type = 'A', time
 		}
 	} catch (error) {
 		const message = error?.name === 'AbortError' ? `${config.label} did not respond in time` : error?.message
+		log.warn('doh', `${config.label} lookup of ${type} ${name} failed: ${message}`, {
+			resolver,
+			name,
+			type,
+			timeoutMs,
+			durationMs: Date.now() - startedAt,
+			error,
+			once: resolver
+		})
 		return { ok: false, error: message || 'Lookup failed', durationMs: Date.now() - startedAt }
 	} finally {
 		clearTimeout(timer)

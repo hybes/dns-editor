@@ -9,7 +9,8 @@ Sentry.init({
 		dsn: config.sentryDsn,
 		environment: config.sentryEnvironment,
 		runtime: 'browser',
-		disabled: String(config.sentryDisabled) === 'true'
+		disabled: String(config.sentryDisabled) === 'true',
+		consoleLogs: Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] })
 	}),
 	beforeSendSpan: Sentry.withStaticSpan(sanitizeSentrySpan)
 })
