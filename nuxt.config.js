@@ -1,4 +1,4 @@
-import { getSentryDsn, isSentryTestRuntime } from './shared/utils/sentry'
+import { getSentryDsn, isOn, isSentryTestRuntime } from './shared/utils/sentry'
 
 const uploadSourceMaps = Boolean(process.env.SENTRY_AUTH_TOKEN?.trim())
 
@@ -73,9 +73,13 @@ export default defineNuxtConfig({
 		tokenKey: process.env.NUXT_TOKEN_KEY || '',
 		openaiApiKey: process.env.OPENAI_API_KEY || '',
 		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5.4-nano',
+		// NUXT_PUBLIC_SENTRY_* override these when the server starts. Whether the browser reports
+		// depends on the page's address: see browserSentrySettings in shared/utils/sentry.js.
 		public: {
 			sentryDsn: getSentryDsn(process.env, 'browser'),
-			sentryEnvironment: process.env.NODE_ENV || 'development',
+			// Empty means production on a real address and development on a local one.
+			sentryEnvironment: process.env.NUXT_PUBLIC_SENTRY_ENVIRONMENT || '',
+			sentryForce: isOn(process.env.NUXT_PUBLIC_SENTRY_FORCE || process.env.VITE_SENTRY_FORCE),
 			sentryDisabled: isSentryTestRuntime() || process.env.NUXT_PUBLIC_SENTRY_DISABLED === 'true'
 		}
 	},

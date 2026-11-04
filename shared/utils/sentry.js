@@ -9,9 +9,128 @@ export function isSentryTestRuntime(env = process.env) {
 	return env.NODE_ENV === 'test' || ['true', '1'].includes(env.VITEST) || env.E2E_TEST_ORCHESTRATED === '1'
 }
 
+// The DSN is always set, so it never decides whether anything is sent: where the app runs does.
 export function getSentryDsn(env = process.env, runtime = 'server') {
 	const override = runtime === 'browser' ? env.NUXT_PUBLIC_SENTRY_DSN : env.SENTRY_DSN
-	return (override ?? (env.NODE_ENV === 'production' ? DEFAULT_SENTRY_DSN : '')).trim()
+	return String(override ?? DEFAULT_SENTRY_DSN).trim()
+}
+
+export const isOn = (value) =>
+	['1', 'true', 'yes', 'on'].includes(
+		String(value ?? '')
+			.trim()
+			.toLowerCase()
+	)
+
+// The app is deployed with Coolify, which sets these in every container it runs. Nothing else
+// (npm run dev, a local build or `docker run`, the tests, a coding agent) does.
+const HOSTING_SIGNALS = ['COOLIFY_FQDN', 'COOLIFY_URL', 'SOURCE_COMMIT']
+
+export function isDeployedServer(env = process.env) {
+	return HOSTING_SIGNALS.some((name) => String(env[name] ?? '').trim() !== '')
+}
+
+// Addresses that only exist on a developer's machine or network.
+export function isLocalHostname(hostname) {
+	const host = String(hostname ?? '')
+		.trim()
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '')
+	if (!host) return true
+	if (host.includes(':')) {
+		// IPv6: loopback, unspecified, unique-local (fc00::/7) and link-local (fe80::/10).
+		if (host === '::1' || host === '::' || /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host))
+			return true
+		// IPv4-mapped, which URL parsing writes in hex: [::ffff:127.0.0.1] becomes [::ffff:7f00:1].
+		const mapped = host.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+		if (mapped) return isLocalHostname(mapped[1])
+		const hex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+		if (!hex) return false
+		const [high, low] = [parseInt(hex[1], 16), parseInt(hex[2], 16)]
+		return isLocalHostname(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)
+	}
+	const ip = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/)
+	if (ip) {
+		const [a, b] = [Number(ip[1]), Number(ip[2])]
+		return (
+			a === 127 ||
+			a === 10 ||
+			a === 0 ||
+			(a === 192 && b === 168) ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 169 && b === 254)
+		)
+	}
+	// A name with no dot is a LAN or container name, never a public site.
+	if (!host.includes('.')) return true
+	return /\.(?:localhost|local|test)$/.test(host)
+}
+
+export function isLocalUrl(url) {
+	if (!url) return false
+	try {
+		return isLocalHostname(new URL(String(url)).hostname)
+	} catch {
+		// A path on its own says nothing about the host.
+		return false
+	}
+}
+
+// The server reports only from a Coolify deployment, or when SENTRY_FORCE=1 asks for it on
+// purpose. SENTRY_ENVIRONMENT names the environment (preview, say); otherwise a deployment is
+// production and anything else development.
+export function serverSentrySettings(env = process.env) {
+	const force = isOn(env.SENTRY_FORCE)
+	const deployed = isDeployedServer(env)
+	const test = isSentryTestRuntime(env)
+	const environment =
+		String(env.SENTRY_ENVIRONMENT ?? '').trim() || (test ? 'test' : deployed ? 'production' : 'development')
+	return {
+		dsn: getSentryDsn(env, 'server'),
+		environment,
+		force,
+		disabled: test || isOn(env.SENTRY_DISABLED) || !(deployed || force)
+	}
+}
+
+// The browser reports only when the page isn't served from a local address, or when
+// NUXT_PUBLIC_SENTRY_FORCE=1 asks for it on purpose. `config` is the public runtime config.
+export function browserSentrySettings(config = {}, hostname = globalThis.location?.hostname) {
+	const force = isOn(config.sentryForce)
+	const local = isLocalHostname(hostname)
+	return {
+		dsn: String(config.sentryDsn ?? '').trim(),
+		environment: String(config.sentryEnvironment ?? '').trim() || (local ? 'development' : 'production'),
+		force,
+		disabled: isOn(config.sentryDisabled) || (local && !force)
+	}
+}
+
+// Second line of defence: whatever the SDK was told, nothing from a page or request on a local
+// address is sent. Only full URLs count: the server's own name (host.name, server.address) is
+// a container name with no dot, and says nothing about where a request came from.
+const URL_ATTRIBUTES = ['url.full', 'url', 'http.url']
+const attributeValue = (value) => (value && typeof value === 'object' && 'value' in value ? value.value : value)
+const hasLocalUrl = (values) =>
+	URL_ATTRIBUTES.some((name) => {
+		const value = attributeValue(values?.[name])
+		return typeof value === 'string' && /^[a-z][a-z\d+.-]*:\/\//i.test(value) && isLocalUrl(value)
+	})
+
+function pageIsLocal() {
+	const hostname = globalThis.location?.hostname
+	return typeof hostname === 'string' && isLocalHostname(hostname)
+}
+
+export function isLocalEvent(event) {
+	return pageIsLocal() || isLocalUrl(event?.request?.url) || hasLocalUrl(event?.contexts?.trace?.data)
+}
+
+// `requestUrl` is the URL of the request a server log was written during, if any: log lines
+// carry the path, not the address the request came in on.
+export function isLocalLog(log, requestUrl) {
+	return pageIsLocal() || isLocalUrl(requestUrl) || hasLocalUrl(log?.attributes)
 }
 
 // Only real secrets are removed: passwords, Cloudflare and other API tokens, Authorization
@@ -424,8 +543,28 @@ export function isDeliberateHttpError(error) {
 }
 
 // `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
-export function sentryOptions({ dsn, environment, runtime, host, disabled = false, consoleLogs, http }) {
+// `force` (SENTRY_FORCE) lets deliberate local testing through the local-address filter.
+// `requestUrl` returns the URL of the server request in progress, to filter its log lines.
+export function sentryOptions({
+	dsn,
+	environment,
+	runtime,
+	host,
+	disabled = false,
+	force = false,
+	requestUrl,
+	consoleLogs,
+	http
+}) {
 	const addAttributes = logAttributesFor({ runtime, host })
+	const sendEvent = (event) => (!force && isLocalEvent(event) ? null : sanitizeSentryEvent(event))
+	const currentRequestUrl = () => {
+		try {
+			return requestUrl?.()
+		} catch {
+			return undefined
+		}
+	}
 	return {
 		dsn,
 		enabled: Boolean(dsn) && environment !== 'test' && !disabled,
@@ -461,11 +600,11 @@ export function sentryOptions({ dsn, environment, runtime, host, disabled = fals
 			...(http ? [http] : []),
 			...(consoleLogs ? [consoleLogs] : [])
 		],
-		beforeSend: (event, hint) =>
-			isDeliberateHttpError(hint?.originalException) ? null : sanitizeSentryEvent(event),
-		beforeSendTransaction: sanitizeSentryEvent,
+		beforeSend: (event, hint) => (isDeliberateHttpError(hint?.originalException) ? null : sendEvent(event)),
+		beforeSendTransaction: sendEvent,
 		beforeBreadcrumb: (breadcrumb) => scrub(breadcrumb),
 		beforeSendLog: (log) => {
+			if (!force && isLocalLog(log, currentRequestUrl())) return null
 			const fromConsole = log.attributes?.['sentry.origin'] === 'auto.log.console'
 			if (echoing && fromConsole) return null
 			const warning = fromConsole ? nodeWarningLog(log) : undefined
