@@ -114,8 +114,9 @@ The sign-in and sign-up forms show Cap's widget ([`app/components/CapCheck.vue`]
 | `NUXT_PUBLIC_CAP_API_ENDPOINT` | Optional. Replaces `https://cap.brth.uk/<site key>/`, for another Cap server (the e2e tests use this). |
 
 - A missing, used, expired or made-up token gets a 400 that the form shows under the widget, logged as info once per address per ten minutes.
-- If Cap can't be reached (no answer in 5 seconds, a network error or a 5xx), the sign-in or sign-up goes through unverified so nobody is locked out, with one warning per outage. The account line in the log says `not checked by Cap` and carries `capVerified: false`. The rate limits still apply.
+- If Cap can't be reached (no answer in 5 seconds, a network error or a 5xx), the sign-in or sign-up goes through unverified so nobody is locked out. There's one warning when the outage starts, and an info line with how many went through once Cap answers again. The account line in the log says `not checked by Cap` and carries `capVerified: false`. The rate limits still apply.
 - If `NUXT_CAP_SECRET_KEY` is missing or Cap refuses it, requests also go through unverified, and it's logged as an error (at start-up and once every ten minutes).
+- In the browser, the widget's own console output is turned off and its failed checks are logged once per page at info (the visitor's browser blocked it) or warn (Cap unreachable). A check that hasn't finished in 30 seconds sends the form without a token and swaps in a fresh widget.
 - The widget loads its WebAssembly solver from `cdn.jsdelivr.net`. The only Content-Security-Policy directive the app sends is `frame-ancestors 'none'`, so nothing else needs allowing; if you add `script-src`, `connect-src` or `worker-src`, allow `https://cap.brth.uk`, `https://cdn.jsdelivr.net` and `blob:`.
 
 ## Validation

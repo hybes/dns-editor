@@ -271,6 +271,10 @@ const cloudflare = createServer((req, res) => {
 
 const dataDir = mkdtempSync(join(tmpdir(), 'dns-manager-e2e-'))
 let app
+// The server's warnings and errors, for checks on what it logged.
+let appStderr = ''
+const outageWarnings = () => appStderr.split('\n').filter((line) => line.startsWith('cap: couldn’t reach')).length
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300))
 const stop = () => {
 	app?.kill()
 	cloudflare.close()
@@ -325,6 +329,7 @@ try {
 	})
 	app.stderr.on('data', (chunk) => {
 		const text = String(chunk)
+		appStderr += text
 		if (!/ExperimentalWarning|trace-warnings/.test(text)) process.stderr.write(text)
 	})
 	for (let attempt = 0; attempt < 50; attempt++) {
@@ -400,6 +405,8 @@ try {
 	capMode = 'gone'
 	const whileGone = await call(bot, 'auth/login', { username: 'ben', password: 'owner password 123' })
 	check('sign-in goes through unverified when Cap drops the connection', whileGone.json?.success === true)
+	await settle()
+	check('one outage is one warning', outageWarnings() === 1, String(outageWarnings()))
 	capMode = 'wrong-secret'
 	const wrongSecret = await call(bot, 'auth/login', {
 		username: 'ben',
@@ -407,6 +414,10 @@ try {
 		capToken: capToken()
 	})
 	check('a wrong Cap secret lets sign-in through unverified', wrongSecret.json?.success === true)
+	capMode = 'down'
+	await call(bot, 'auth/login', { username: 'ben', password: 'owner password 123' })
+	await settle()
+	check('a new outage after Cap answered again warns again', outageWarnings() === 2, String(outageWarnings()))
 	capMode = 'up'
 	await call(bot, 'auth/logout')
 	check(

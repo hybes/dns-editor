@@ -542,6 +542,26 @@ export function isDeliberateHttpError(error) {
 	return isH3 && status >= 300 && status < 500
 }
 
+// Cap's widget (@cap.js/widget) runs its check from its own click handler without catching the
+// result, so a failed check also surfaces as an unhandled rejection. Those errors carry one of
+// the widget's codes and are already logged once, at the right level, by components/CapCheck.vue.
+const CAP_WIDGET_CODES = new Set([
+	'missing_endpoint',
+	'network_error',
+	'challenge_parse_error',
+	'challenge_unsupported',
+	'solve_failed',
+	'instr_timeout',
+	'instr_blocked',
+	'redeem_failed',
+	'invalid_solution',
+	'invalid_expires',
+	'wasm_load_failed',
+	'worker_spawn_failed'
+])
+export const isCapWidgetError = (error) =>
+	error instanceof Error && typeof error.code === 'string' && CAP_WIDGET_CODES.has(error.code)
+
 // `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
 // `force` (SENTRY_FORCE) lets deliberate local testing through the local-address filter.
 // `requestUrl` returns the URL of the server request in progress, to filter its log lines.
@@ -600,7 +620,10 @@ export function sentryOptions({
 			...(http ? [http] : []),
 			...(consoleLogs ? [consoleLogs] : [])
 		],
-		beforeSend: (event, hint) => (isDeliberateHttpError(hint?.originalException) ? null : sendEvent(event)),
+		beforeSend: (event, hint) =>
+			isDeliberateHttpError(hint?.originalException) || isCapWidgetError(hint?.originalException)
+				? null
+				: sendEvent(event),
 		beforeSendTransaction: sendEvent,
 		beforeBreadcrumb: (breadcrumb) => scrub(breadcrumb),
 		beforeSendLog: (log) => {

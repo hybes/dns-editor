@@ -215,6 +215,11 @@ test('events, transactions and logs from local addresses are dropped even if the
 	)
 	assert.notEqual(options.beforeSend(at('https://dns.brth.uk/api/records')), null)
 	assert.notEqual(options.beforeSend({ message: 'no request', tags: {} }), null)
+	// The Cap widget's own failed checks are logged by CapCheck.vue, not sent as errors.
+	const capFailure = Object.assign(new Error('down'), { code: 'network_error' })
+	assert.equal(options.beforeSend(at('https://dns.brth.uk/login'), { originalException: capFailure }), null)
+	const otherCoded = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })
+	assert.notEqual(options.beforeSend(at('https://dns.brth.uk/login'), { originalException: otherCoded }), null)
 	const line = (attributes) => ({ level: 'warn', message: 'x', attributes })
 	assert.equal(options.beforeSendLog(line({ 'url.full': 'http://localhost:3000/zones' })), null)
 	assert.equal(options.beforeSendLog(line({ url: { value: 'http://127.0.0.1/', type: 'string' } })), null)

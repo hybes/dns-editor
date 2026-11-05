@@ -1,6 +1,7 @@
 <template>
 	<div v-if="endpoint" class="flex flex-col gap-1.5">
 		<cap-widget
+			:key="generation"
 			ref="widget"
 			class="cap-check"
 			:data-cap-api-endpoint="endpoint"
@@ -39,6 +40,12 @@ const token = defineModel({ type: String, default: '' })
 const config = useRuntimeConfig()
 const endpoint = capEndpoint(config.public)
 const widget = useTemplateRef('widget')
+// Bumped to swap in a fresh widget when a check hangs (see ready()).
+const generation = ref(0)
+
+// The widget writes every failure to the console itself, which the browser's GlitchTip set-up
+// would send as unthrottled error logs. onError logs them once, at the right level, instead.
+if (import.meta.client) window.CAP_SILENT = true
 
 // Give up waiting on a check that hasn't finished in this long and send the form without a
 // token; the server decides (it lets it through only if Cap itself is down).
@@ -87,7 +94,21 @@ const ready = () => {
 		}
 		const solved = (event) => finish(event.detail?.token || '')
 		const failed = () => finish('')
-		const timer = setTimeout(() => finish(token.value), SOLVE_TIMEOUT_MS)
+		// A check that hangs keeps the widget busy, so later solve() calls would do nothing:
+		// replace it with a fresh one, which also stops the old one's work.
+		const timer = setTimeout(() => {
+			log.warn(
+				'cap',
+				logText`widget check didn’t finish in ${SOLVE_TIMEOUT_MS / 1000} s; sending without a token`,
+				{
+					endpoint,
+					once: 'solve-timeout'
+				}
+			)
+			token.value = ''
+			generation.value++
+			finish('')
+		}, SOLVE_TIMEOUT_MS)
 		element.addEventListener('solve', solved)
 		element.addEventListener('error', failed)
 		// Already running when the person selected the widget: the listeners above catch the end.

@@ -12,7 +12,8 @@ import { clientIp } from './rateLimit'
 // - A missing, used, expired or made-up token gets a 400 the form shows next to the widget.
 // - If Cap can't be reached (timeout, network error or a 5xx), the request goes through
 //   unverified, so nobody is locked out while it's down; the rate limits still apply. One
-//   warning per outage, with a count of the requests let through.
+//   warning when an outage starts, and an info line with the count let through once Cap
+//   answers again.
 // - If the server's own settings are wrong (no NUXT_CAP_SECRET_KEY, or Cap refuses the secret),
 //   that's our fault rather than the visitor's: the request goes through unverified and it's
 //   logged as an error, once per ten minutes.
@@ -28,6 +29,21 @@ const refuse = () =>
 		message: 'We couldn’t confirm you’re a person. Run the check again, then try once more.',
 		data: { reason: 'cap' }
 	})
+
+// The current outage, from the first siteverify call that failed until one gets an answer.
+let outage = null
+
+function cameBack(host) {
+	if (!outage) return
+	const { since, letThrough } = outage
+	outage = null
+	const minutes = Math.max(1, Math.round((Date.now() - since) / 60_000))
+	log.info('cap', logText`${host} answering again after about ${minutes} min; ${letThrough} let through unverified`, {
+		host,
+		outageMinutes: minutes,
+		letThrough
+	})
+}
 
 const hostOf = (url) => {
 	try {
@@ -90,16 +106,25 @@ export async function checkCap(event, token, form) {
 					: status >= 500
 						? `siteverify answered ${status}`
 						: `siteverify answered ${status} without JSON`
-		log.warn('cap', logText`couldn’t reach ${host} (${why}); letting a ${form} through unverified`, {
-			form,
-			host,
-			'http.status_code': status,
-			durationMs: msSince(started),
-			error: failure,
-			once: 'outage'
-		})
+		if (outage) {
+			outage.letThrough++
+		} else {
+			outage = { since: Date.now(), letThrough: 1 }
+			log.warn(
+				'cap',
+				logText`couldn’t reach ${host} (${why}); letting sign-ins and sign-ups through unverified`,
+				{
+					form,
+					host,
+					'http.status_code': status,
+					durationMs: msSince(started),
+					error: failure
+				}
+			)
+		}
 		return { verified: false, reason: 'unreachable' }
 	}
+	cameBack(host)
 
 	if (result.success === true) return { verified: true }
 
