@@ -215,6 +215,11 @@ test('events, transactions and logs from local addresses are dropped even if the
 	)
 	assert.notEqual(options.beforeSend(at('https://dns.brth.uk/api/records')), null)
 	assert.notEqual(options.beforeSend({ message: 'no request', tags: {} }), null)
+	// The Cap widget's own failed checks are logged by CapCheck.vue, not sent as errors.
+	const capFailure = Object.assign(new Error('down'), { code: 'network_error' })
+	assert.equal(options.beforeSend(at('https://dns.brth.uk/login'), { originalException: capFailure }), null)
+	const otherCoded = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })
+	assert.notEqual(options.beforeSend(at('https://dns.brth.uk/login'), { originalException: otherCoded }), null)
 	const line = (attributes) => ({ level: 'warn', message: 'x', attributes })
 	assert.equal(options.beforeSendLog(line({ 'url.full': 'http://localhost:3000/zones' })), null)
 	assert.equal(options.beforeSendLog(line({ url: { value: 'http://127.0.0.1/', type: 'string' } })), null)
@@ -328,6 +333,19 @@ test('the secret filter knows names and shapes, not just exact fields', () => {
 		scrubString(`callback?code=oauth-code-123&state=xyz789abc`),
 		'callback?code=[redacted]&state=[redacted]'
 	)
+	// A sign-in body and the Cap facts logged with it
+	const capToken = 'cb61c77ed2:2c3f9d1e5a:8b7a6f5e4d3c2b1a0f9e8d7c'
+	const signIn = scrub({
+		username: 'ben',
+		capToken,
+		capSecretKey: 'cap-secret-value',
+		capVerified: false,
+		capReason: 'unreachable'
+	})
+	assert.ok(!JSON.stringify(signIn).includes(capToken), JSON.stringify(signIn))
+	assert.equal(signIn.capSecretKey, '[redacted]')
+	assert.equal(signIn.capVerified, false)
+	assert.equal(signIn.capReason, 'unreachable')
 	const cyclic = { name: 'www.example.com', password: PASSWORD }
 	cyclic.self = cyclic
 	assert.doesNotThrow(() => scrub(cyclic))

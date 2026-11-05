@@ -27,13 +27,14 @@ export function useAuth() {
 
 	const post = (endpoint, body) => $fetch(`/api/auth/${endpoint}`, { method: 'POST', body, timeout: 30_000 })
 
-	const signIn = async (username, password) => {
-		await post('login', { username, password })
+	// capToken is the Cap widget's token (components/CapCheck.vue); it works once.
+	const signIn = async (username, password, capToken) => {
+		await post('login', { username, password, capToken })
 		return load({ force: true })
 	}
 
-	const signUp = async (username, password, confirm) => {
-		await post('signup', { username, password, confirm })
+	const signUp = async (username, password, confirm, capToken) => {
+		await post('signup', { username, password, confirm, capToken })
 		return load({ force: true })
 	}
 

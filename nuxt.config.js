@@ -1,3 +1,4 @@
+import { DEFAULT_CAP_SITE_KEY } from './shared/utils/cap'
 import { getSentryDsn, isOn, isSentryTestRuntime } from './shared/utils/sentry'
 
 const uploadSourceMaps = Boolean(process.env.SENTRY_AUTH_TOKEN?.trim())
@@ -73,6 +74,9 @@ export default defineNuxtConfig({
 		tokenKey: process.env.NUXT_TOKEN_KEY || '',
 		openaiApiKey: process.env.OPENAI_API_KEY || '',
 		openaiDnsModel: process.env.OPENAI_DNS_MODEL || 'gpt-5.4-nano',
+		// Cap's secret for the site key, set at run time as NUXT_CAP_SECRET_KEY and never built in.
+		// See shared/utils/cap.js and server/utils/cap.js.
+		capSecretKey: '',
 		// NUXT_PUBLIC_SENTRY_* override these when the server starts. Whether the browser reports
 		// depends on the page's address: see browserSentrySettings in shared/utils/sentry.js.
 		public: {
@@ -80,11 +84,22 @@ export default defineNuxtConfig({
 			// Empty means production on a real address and development on a local one.
 			sentryEnvironment: process.env.NUXT_PUBLIC_SENTRY_ENVIRONMENT || '',
 			sentryForce: isOn(process.env.NUXT_PUBLIC_SENTRY_FORCE || process.env.VITE_SENTRY_FORCE),
-			sentryDisabled: isSentryTestRuntime() || process.env.NUXT_PUBLIC_SENTRY_DISABLED === 'true'
+			sentryDisabled: isSentryTestRuntime() || process.env.NUXT_PUBLIC_SENTRY_DISABLED === 'true',
+			// Cap on sign-in and sign-up. NUXT_PUBLIC_CAP_SITE_KEY overrides the site key (empty turns
+			// Cap off); NUXT_PUBLIC_CAP_API_ENDPOINT replaces https://cap.brth.uk/<site key>/.
+			capSiteKey: DEFAULT_CAP_SITE_KEY,
+			capApiEndpoint: ''
 		}
 	},
 
 	css: ['~/assets/css/main.css'],
+
+	// Cap's widget (components/CapCheck.vue) is a web component, not a Vue one.
+	vue: {
+		compilerOptions: {
+			isCustomElement: (tag) => tag === 'cap-widget'
+		}
+	},
 
 	nitro: {
 		// Node's built-in SQLite (server/utils/db.js) loads at run time, not from the bundle.

@@ -60,6 +60,7 @@ Your connection makes the Cloudflare requests for a shared domain, and its token
 ## Security
 
 - Passwords are scrypt hashes; sign-in, sign-up and password checks are rate-limited per address.
+- Sign-in and sign-up also need a [Cap](https://trycap.dev) check, a small proof-of-work puzzle the browser solves, from our Cap server at `cap.brth.uk`. See [Cap on sign-in and sign-up](#cap-on-sign-in-and-sign-up).
 - Sessions are random values in an HttpOnly, SameSite=Lax cookie (Secure over HTTPS), stored only as hashes, lasting 30 days from the last visit. Changing the password signs out other sessions; deleting an account removes its connections and shares.
 - Cloudflare tokens are encrypted with AES-256-GCM and only decrypted on the server for the request that needs one.
 - Every `/api` request passes through [`server/middleware/auth.js`](server/middleware/auth.js), which refuses requests from other sites (by `Origin`), requires a session, picks the connection and enforces sharing. Request bodies over 25 MB are refused.
@@ -102,17 +103,33 @@ Three utilities sit outside any zone under **Tools** in the sidebar:
 
 These tools contact third-party services from this server: the resolvers, the relevant registry's RDAP endpoint, IANA and Porkbun receive only the names being looked up, never the Cloudflare token. The propagation check needs outbound UDP/TCP port 53 from wherever the app is hosted, and it won't query name server addresses in private, loopback or link-local ranges. Cloudflare Registrar is the one purchase made in the app: `/registrar` shows Cloudflare's quote, asks you to confirm the exact total and checks the price again immediately before submitting. It charges the account's default payment method and can't be refunded. The Console won't run `registrar registrations create` for the same reason, apart from a dry run. Purchases from other registrars complete on their own sites.
 
+## Cap on sign-in and sign-up
+
+The sign-in and sign-up forms show Cap's widget ([`app/components/CapCheck.vue`](app/components/CapCheck.vue)). Selecting it solves a challenge from `https://cap.brth.uk/<site key>/`; submitting without selecting it runs the same check first. The form sends the token as `capToken`, and the server confirms it once with Cap's `siteverify` ([`server/utils/cap.js`](server/utils/cap.js)) after the rate limits and before checking the password or making the account. Tokens work once, so the widget resets after every submission.
+
+| Variable                       | Purpose                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `NUXT_CAP_SECRET_KEY`          | The site key's secret from the Cap dashboard. Server only, set at run time; never commit it.           |
+| `NUXT_PUBLIC_CAP_SITE_KEY`     | The public site key, `cb61c77ed2` by default. Set it to empty to turn Cap off on a self-hosted copy.   |
+| `NUXT_PUBLIC_CAP_API_ENDPOINT` | Optional. Replaces `https://cap.brth.uk/<site key>/`, for another Cap server (the e2e tests use this). |
+
+- A missing, used, expired or made-up token gets a 400 that the form shows under the widget, logged as info once per address per ten minutes.
+- If Cap can't be reached (no answer in 5 seconds, a network error or a 5xx), the sign-in or sign-up goes through unverified so nobody is locked out. There's one warning when the outage starts, and an info line with how many went through once Cap answers again. The account line in the log says `not checked by Cap` and carries `capVerified: false`. The rate limits still apply.
+- If `NUXT_CAP_SECRET_KEY` is missing or Cap refuses it, requests also go through unverified, and it's logged as an error (at start-up and once every ten minutes).
+- In the browser, the widget's own console output is turned off and its failed checks are logged once per page at info (the visitor's browser blocked it) or warn (Cap unreachable). A check that hasn't finished in 30 seconds sends the form without a token and swaps in a fresh widget.
+- The widget loads its WebAssembly solver from `cdn.jsdelivr.net`. The only Content-Security-Policy directive the app sends is `frame-ancestors 'none'`, so nothing else needs allowing; if you add `script-src`, `connect-src` or `worker-src`, allow `https://cap.brth.uk`, `https://cdn.jsdelivr.net` and `blob:`.
+
 ## Validation
 
 ```bash
 npm run lint
 npm run test:monitoring  # secrets filter, log attributes and SDK envelopes; no network requests
 npm run build
-npm run test:e2e   # after build: accounts, connections and sharing against a stand-in Cloudflare
+npm run test:e2e   # after build: accounts, Cap, connections and sharing against stand-ins
 npm run cf:check   # after changing the catalogue or server/utils/cfCommand.js
 ```
 
-`test:e2e` starts the built server on port 3997 with a temporary data directory and a stand-in Cloudflare API on port 3998 (`CLOUDFLARE_API_BASE`), signs up three accounts and checks what each can and can't do.
+`test:e2e` starts the built server on port 3997 with a temporary data directory and a stand-in Cloudflare API and Cap server on port 3998 (`CLOUDFLARE_API_BASE`, `NUXT_PUBLIC_CAP_API_ENDPOINT`). It checks that sign-up and sign-in refuse missing, made-up and reused Cap tokens and go through unverified while Cap is down, then signs up three accounts and checks what each can and can't do.
 
 The production build uses Nitro's Node server preset and retains the `server/api/*` routes that proxy Cloudflare requests.
 
@@ -129,15 +146,16 @@ Or build the included container, keeping the data directory on a volume:
 
 ```bash
 docker build -t dns-manager .
-docker run --rm -p 3000:3000 -v dns-manager-data:/app/.data -e NUXT_TOKEN_KEY -e OPENAI_API_KEY dns-manager
+docker run --rm -p 3000:3000 -v dns-manager-data:/app/.data -e NUXT_TOKEN_KEY -e NUXT_CAP_SECRET_KEY -e OPENAI_API_KEY dns-manager
 ```
 
-| Variable                             | Purpose                                                                    |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| `NUXT_DATA_DIR`                      | Where the SQLite database lives (`.data` by default). Keep it on a volume. |
-| `NUXT_TOKEN_KEY`                     | 32 random bytes, base64, to encrypt stored tokens. Strongly recommended.   |
-| `OPENAI_API_KEY`, `OPENAI_DNS_MODEL` | The records page's AI editor, off without a key.                           |
-| `CLOUDFLARE_API_BASE`                | For the end-to-end tests only; leave unset.                                |
+| Variable                             | Purpose                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `NUXT_DATA_DIR`                      | Where the SQLite database lives (`.data` by default). Keep it on a volume.    |
+| `NUXT_TOKEN_KEY`                     | 32 random bytes, base64, to encrypt stored tokens. Strongly recommended.      |
+| `OPENAI_API_KEY`, `OPENAI_DNS_MODEL` | The records page's AI editor, off without a key.                              |
+| `NUXT_CAP_SECRET_KEY`                | Cap's secret for sign-in and sign-up. See [Cap](#cap-on-sign-in-and-sign-up). |
+| `CLOUDFLARE_API_BASE`                | For the end-to-end tests only; leave unset.                                   |
 
 The server keeps its data in `NUXT_DATA_DIR` (`.data` by default): the SQLite database of accounts, sessions and encrypted connections. Set `NUXT_TOKEN_KEY` to 32 random bytes, base64-encoded (`openssl rand -base64 32`), to encrypt the stored tokens with a key kept outside that directory. Without it, the server makes a key once and saves it as `token.key` in the data directory, so a copy of the directory would be enough to read the tokens. Changing or losing the key makes the stored tokens unreadable, and each connection has to be added again.
 
@@ -163,13 +181,13 @@ Browser and Nitro server errors and logs go to our self-hosted [GlitchTip](https
 
 What's logged, all through [`shared/utils/log.js`](shared/utils/log.js):
 
-- Errors: failed API requests (5xx), Cloudflare connection failures, tokens that can't be decrypted, an unconfirmed domain registration, a broken `NUXT_TOKEN_KEY`, a database that won't open and a failed tidy job.
-- Warnings: Cloudflare timeouts, 5xx and rate limiting (once a minute per path), writes Cloudflare refused, 400s from API routes, refused cross-site or oversized requests, sharing refusals, rate limits and failed sign-ins, failed token set-up steps, registrations refused or repriced, RDAP, DNS-over-HTTPS and Porkbun failures, and requests the browser couldn't get answered.
-- Info, for notable events only: start-up, sign-ins and account changes, connections added or removed, shares made, changed, accepted or left, DNS record changes and zone imports, AI editor changes, Console commands that change something, file uploads, domain registrations and tidy-job counts.
+- Errors: failed API requests (5xx), Cloudflare connection failures, tokens that can't be decrypted, an unconfirmed domain registration, a broken `NUXT_TOKEN_KEY`, a missing or refused `NUXT_CAP_SECRET_KEY`, a database that won't open and a failed tidy job.
+- Warnings: Cloudflare timeouts, 5xx and rate limiting (once a minute per path), writes Cloudflare refused, 400s from API routes, refused cross-site or oversized requests, sharing refusals, rate limits and failed sign-ins, Cap outages, failed token set-up steps, registrations refused or repriced, RDAP, DNS-over-HTTPS and Porkbun failures, and requests the browser couldn't get answered.
+- Info, for notable events only: start-up, sign-ins and account changes, Cap refusals (once per address per ten minutes), connections added or removed, shares made, changed, accepted or left, DNS record changes and zone imports, AI editor changes, Console commands that change something, file uploads, domain registrations and tidy-job counts.
 
 Any other `console.warn` and `console.error` output also reaches the log feed.
 
-**What's removed.** Only secrets: passwords, Cloudflare and other API tokens, `Authorization` headers, cookies and session ids, invite links, one-time, MFA and recovery codes, OAuth codes and state, signed URL signatures, TSIG and Turnstile secrets, database bound parameters and card numbers. They're removed by field name (in any spelling, at any depth) and by shape in text, such as `password=…` after any label, `Bearer …` and 40-character Cloudflare tokens. Usernames, zone and record names, record contents, URLs, paths, status codes, error messages and stacks are kept. Request bodies are only read on routes that carry DNS, zone and sharing data. Routes that take passwords, Cloudflare tokens, invite links, bypass tokens, uploaded files or pasted text, and the Console (`/api/cf/run`, where a command such as `workers secrets update` carries a secret), send no body; a Console error or log line carries the command, its account or zone, the values of inputs that go in the URL, and the names (not values) of everything else. Any new route starts without body capture until it's added to the list in `shared/utils/sentry.js`. The filter is in [`shared/utils/sentry.js`](shared/utils/sentry.js) and tested by `npm run test:monitoring`.
+**What's removed.** Only secrets: passwords, Cloudflare and other API tokens, `Authorization` headers, cookies and session ids, invite links, one-time, MFA and recovery codes, OAuth codes and state, signed URL signatures, Cap tokens and secrets, TSIG and Turnstile secrets, database bound parameters and card numbers. They're removed by field name (in any spelling, at any depth) and by shape in text, such as `password=…` after any label, `Bearer …` and 40-character Cloudflare tokens. Usernames, zone and record names, record contents, URLs, paths, status codes, error messages and stacks are kept. Request bodies are only read on routes that carry DNS, zone and sharing data. Routes that take passwords, Cloudflare tokens, invite links, bypass tokens, uploaded files or pasted text, and the Console (`/api/cf/run`, where a command such as `workers secrets update` carries a secret), send no body; a Console error or log line carries the command, its account or zone, the values of inputs that go in the URL, and the names (not values) of everything else. Any new route starts without body capture until it's added to the list in `shared/utils/sentry.js`. The filter is in [`shared/utils/sentry.js`](shared/utils/sentry.js) and tested by `npm run test:monitoring`.
 
 Source maps upload only when `SENTRY_AUTH_TOKEN` is provided at build time. In Coolify on `host.cnnct.uk`, add it as a **build-time variable** for the Dockerfile build pack; the build stage reads it through `ARG SENTRY_AUTH_TOKEN`, and the runtime image contains only the built output. For a local container build, pass `--build-arg SENTRY_AUTH_TOKEN`. Uploads target `https://error.cnnct.uk/`, organisation `connect-dorset`, project `dns-editor`; `SENTRY_URL` can override the build endpoint for local upload tests. Upload failures warn and let the build finish. Generated maps are deleted, including after upload failures, and are never served publicly. Commit association and deploy records are disabled.
 

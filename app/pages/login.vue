@@ -25,6 +25,7 @@
 					class="w-full"
 				/>
 			</UFormField>
+			<CapCheck ref="cap" v-model="capToken" :error="capError" />
 			<UButton type="submit" size="lg" block :loading="busy" :label="busy ? 'Signing in…' : 'Sign in'" />
 			<p role="status" class="sr-only">{{ busy ? 'Signing in' : '' }}</p>
 		</form>
@@ -52,6 +53,9 @@ const busy = ref(false)
 const errors = reactive({ username: '', password: '' })
 const usernameInput = useTemplateRef('usernameInput')
 const passwordInput = useTemplateRef('passwordInput')
+const cap = useTemplateRef('cap')
+const capToken = ref('')
+const capError = ref('')
 
 const signupLink = computed(() => ({
 	path: '/signup',
@@ -62,6 +66,7 @@ watch([username, password], () => {
 	errors.username = ''
 	errors.password = ''
 })
+watch(capToken, (token) => token && (capError.value = ''))
 
 const submit = async () => {
 	if (busy.value) return
@@ -74,18 +79,25 @@ const submit = async () => {
 		return passwordInput.value?.inputRef?.focus()
 	}
 	busy.value = true
+	capError.value = ''
 	try {
-		await auth.signIn(username.value.trim(), password.value)
+		await auth.signIn(username.value.trim(), password.value, await cap.value?.ready())
 		// Cloudflare data cached for someone else must not carry over.
 		clearNuxtState((key) => key.startsWith('cf-'), { reset: true })
 		await navigateTo(safeRedirect(route.query.redirect), { replace: true })
 	} catch (error) {
+		if (error?.data?.data?.reason === 'cap') {
+			capError.value = describeError(error, 'Couldn’t confirm you’re a person. Try again.')
+			return
+		}
 		// Cleared first: clearing the field clears any message, so the message goes in after.
 		password.value = ''
 		await nextTick()
 		errors.password = describeError(error, 'Couldn’t sign in. Try again.')
 		passwordInput.value?.inputRef?.focus()
 	} finally {
+		// The token is used up whatever the answer.
+		cap.value?.reset()
 		busy.value = false
 	}
 }

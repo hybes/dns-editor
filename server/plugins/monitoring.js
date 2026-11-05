@@ -1,4 +1,5 @@
 import { getRequestHeader } from 'h3'
+import { capSiteKey } from '../../shared/utils/cap'
 import { log, logText, logValue } from '../../shared/utils/log'
 
 // Start-up checks and one log line for each failed API request. Uncaught errors still become
@@ -14,7 +15,8 @@ function checkConfig() {
 		dataDir: config.dataDir,
 		node: process.version,
 		aiEditor: Boolean(config.openaiApiKey),
-		aiModel: config.openaiDnsModel
+		aiModel: config.openaiDnsModel,
+		cap: !capSiteKey(config.public) ? 'off' : config.capSecretKey ? 'on' : 'no secret'
 	}
 	if (!config.tokenKey) {
 		log.warn(
@@ -28,9 +30,16 @@ function checkConfig() {
 			tokenKeyBytes: Buffer.from(config.tokenKey, 'base64').length
 		})
 	}
+	if (facts.cap === 'no secret') {
+		log.error(
+			'startup',
+			'NUXT_CAP_SECRET_KEY isn’t set, so sign-ins and sign-ups go through without a Cap check',
+			facts
+		)
+	}
 	log.info(
 		'startup',
-		logText`server started on ${process.version} (data in ${config.dataDir}, AI editor ${facts.aiEditor ? 'on' : 'off'})`,
+		logText`server started on ${process.version} (data in ${config.dataDir}, AI editor ${facts.aiEditor ? 'on' : 'off'}, Cap ${facts.cap})`,
 		facts
 	)
 }

@@ -45,6 +45,7 @@
 					class="w-full"
 				/>
 			</UFormField>
+			<CapCheck ref="cap" v-model="capToken" :error="capError" />
 			<UButton
 				type="submit"
 				size="lg"
@@ -82,6 +83,9 @@ const inputs = {
 	password: useTemplateRef('passwordInput'),
 	confirm: useTemplateRef('confirmInput')
 }
+const cap = useTemplateRef('cap')
+const capToken = ref('')
+const capError = ref('')
 
 const loginLink = computed(() => ({
 	path: '/login',
@@ -89,6 +93,7 @@ const loginLink = computed(() => ({
 }))
 
 watch([username, password, confirm], () => Object.assign(errors, { username: '', password: '', confirm: '' }))
+watch(capToken, (token) => token && (capError.value = ''))
 
 const fail = async (field, message) => {
 	errors[field] = message
@@ -102,19 +107,26 @@ const submit = async () => {
 	if (password.value.length < MIN_PASSWORD) return fail('password', `Use at least ${MIN_PASSWORD} characters.`)
 	if (confirm.value !== password.value) return fail('confirm', 'The two passwords don’t match.')
 	busy.value = true
+	capError.value = ''
 	try {
-		await auth.signUp(username.value.trim(), password.value, confirm.value)
+		await auth.signUp(username.value.trim(), password.value, confirm.value, await cap.value?.ready())
 		clearNuxtState((key) => key.startsWith('cf-'), { reset: true })
 		// Back to an invite link if that's where the person came from; otherwise add Cloudflare.
 		const target = route.query.redirect ? safeRedirect(route.query.redirect) : '/connections'
 		await navigateTo(target, { replace: true })
 	} catch (error) {
+		if (error?.data?.data?.reason === 'cap') {
+			capError.value = describeError(error, 'Couldn’t confirm you’re a person. Try again.')
+			return
+		}
 		const message = describeError(error, 'Couldn’t create the account. Try again.')
 		await fail(
 			/username/i.test(message) ? 'username' : /password/i.test(message) ? 'password' : 'username',
 			message
 		)
 	} finally {
+		// The token is used up whatever the answer.
+		cap.value?.reset()
 		busy.value = false
 	}
 }
