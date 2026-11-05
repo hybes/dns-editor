@@ -29,6 +29,7 @@
 		"prettier-plugin-tailwindcss": "^0.8.1"
 	},
 	"dependencies": {
+		"@cap.js/widget": "0.1.58",
 		"@nuxt/eslint": "^1.17.0",
 		"@nuxt/ui": "^4.11.1",
 		"@sentry/nuxt": "^11.10.0",

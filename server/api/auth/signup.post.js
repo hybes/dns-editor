@@ -1,12 +1,14 @@
 import { createError } from 'h3'
 import { readJsonBody } from '../../utils/readJsonBody'
 import { createUser, readNewPassword, readUsername } from '../../utils/accounts'
+import { checkCap, unverifiedNote } from '../../utils/cap'
 import { clientIp, limitAttempts } from '../../utils/rateLimit'
 import { startSession } from '../../utils/session'
 import { log, logText } from '../../../shared/utils/log'
 
 // Creates an account and signs in. Anyone who can reach the site can sign up; each account
-// only ever sees the Cloudflare connections it adds itself. Body: { username, password }.
+// only ever sees the Cloudflare connections it adds itself. Body: { username, password, confirm,
+// capToken }. The Cap token is checked once the fields are valid, before the account is made.
 export default defineEventHandler(async (event) => {
 	limitAttempts(`signup:${clientIp(event)}`, { limit: 10, windowMs: 60 * 60_000 })
 	const body = await readJsonBody(event)
@@ -15,12 +17,15 @@ export default defineEventHandler(async (event) => {
 	if (body.confirm !== undefined && body.confirm !== password) {
 		throw createError({ statusCode: 400, message: 'The two passwords don’t match.' })
 	}
+	const cap = await checkCap(event, body.capToken, 'sign-up')
 	const user = await createUser(username, password)
 	startSession(event, user.id)
-	log.info('auth', logText`account ${user.username} created from ${clientIp(event)}`, {
+	log.info('auth', logText`account ${user.username} created from ${clientIp(event)}${unverifiedNote(cap)}`, {
 		userId: user.id,
 		username: user.username,
-		ip: clientIp(event)
+		ip: clientIp(event),
+		capVerified: cap.verified,
+		capReason: cap.reason
 	})
 	return { success: true, errors: [], messages: [], result: { user } }
 })

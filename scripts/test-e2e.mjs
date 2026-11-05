@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // End-to-end checks of accounts, connections and sharing against the built server
-// (.output, from `npm run build`) and a stand-in Cloudflare API, so nothing reaches Cloudflare.
+// (.output, from `npm run build`) and a stand-in Cloudflare API and Cap server, so nothing reaches
+// Cloudflare or cap.brth.uk.
 // Two people sign up; the owner connects a Cloudflare token and shares one domain; the checks
 // then make sure the other person can do exactly what they were given, and nothing more.
 //
@@ -27,6 +28,8 @@ const Z3 = '3'.repeat(32)
 const Z4 = '4'.repeat(32)
 const BUCKET = `dm-${Z1}`
 const RECORD = 'f'.repeat(32)
+const CAP_SITE_KEY = 'e2esitekey'
+const CAP_SECRET = 'cap-secret-0123456789abcdefghij'
 
 if (!existsSync('.output/server/index.mjs')) {
 	console.error('Build the app first: npm run build')
@@ -87,11 +90,50 @@ const ok = (res, result, extra = {}) => send(res, 200, { success: true, errors: 
 const refuse = (res, code = 10000, message = 'Authentication error') =>
 	send(res, 403, { success: false, errors: [{ code, message }], messages: [], result: null })
 
+// --- A stand-in Cap Standalone, answering as cap.brth.uk does (standalone/src/siteverify.js) ---
+
+const capTokens = new Set()
+const capCalls = []
+// 'up', 'down' (answers 503), 'gone' (drops the connection) or 'wrong-secret' (as if
+// NUXT_CAP_SECRET_KEY were wrong)
+let capMode = 'up'
+let capCount = 0
+// A token the widget would have got by solving a challenge.
+const capToken = () => {
+	const token = `${CAP_SITE_KEY}:${++capCount}:${randomBytes(12).toString('hex')}`
+	capTokens.add(token)
+	return token
+}
+function siteverify(res, siteKey, body) {
+	capCalls.push(body)
+	if (capMode === 'down') return send(res, 503, { error: 'Service Unavailable' })
+	if (capMode === 'gone') return res.socket.destroy()
+	const response = String(body?.response || '')
+	if (response.split(':').length !== 3)
+		return send(res, 400, { success: false, error: 'Missing required parameters' })
+	if (!response.startsWith(siteKey)) return send(res, 404, { success: false, error: 'Invalid site key or secret' })
+	if (capMode === 'wrong-secret' || body.secret !== CAP_SECRET || siteKey !== CAP_SITE_KEY) {
+		return send(res, 403, { success: false, error: 'Invalid site key or secret' })
+	}
+	if (!capTokens.delete(response)) return send(res, 404, { success: false, error: 'Token not found' })
+	return send(res, 200, { success: true })
+}
+
 const cloudflare = createServer((req, res) => {
 	let raw = ''
 	req.on('data', (chunk) => (raw += chunk))
 	req.on('end', () => {
 		const url = new URL(req.url, 'http://x')
+		const capPath = url.pathname.match(/^\/cap\/([^/]+)\/siteverify$/)
+		if (capPath) {
+			let capBody = null
+			try {
+				capBody = JSON.parse(raw)
+			} catch {
+				// Cap would refuse it.
+			}
+			return siteverify(res, capPath[1], capBody)
+		}
 		const path = url.pathname.replace('/client/v4', '')
 		const token = String(req.headers.authorization || '').replace('Bearer ', '')
 		const who = tokens[token]
@@ -274,7 +316,10 @@ try {
 			HOST: '127.0.0.1',
 			NUXT_DATA_DIR: dataDir,
 			NUXT_TOKEN_KEY: randomBytes(32).toString('base64'),
-			CLOUDFLARE_API_BASE: `http://127.0.0.1:${CF_PORT}/client/v4`
+			CLOUDFLARE_API_BASE: `http://127.0.0.1:${CF_PORT}/client/v4`,
+			NUXT_PUBLIC_CAP_SITE_KEY: CAP_SITE_KEY,
+			NUXT_PUBLIC_CAP_API_ENDPOINT: `http://127.0.0.1:${CF_PORT}/cap/${CAP_SITE_KEY}/`,
+			NUXT_CAP_SECRET_KEY: CAP_SECRET
 		},
 		stdio: ['ignore', 'ignore', 'pipe']
 	})
@@ -303,15 +348,83 @@ try {
 	// Accounts and connections
 	check('health check answers', (await fetch(`${APP}/api/health`)).ok)
 	check('signed out is refused', (await call(owner, 'zones')).status === 401)
+
+	// Cap on sign-up and sign-in
+	const bot = client()
+	const botSignup = { username: 'robot', password: 'robot password 12' }
+	const noToken = await call(bot, 'auth/signup', botSignup)
+	check(
+		'sign-up without a Cap token is refused',
+		noToken.status === 400 && noToken.json?.data?.reason === 'cap' && /person/.test(noToken.json?.message || ''),
+		noToken.text.slice(0, 160)
+	)
+	check('the missing token was still checked with Cap', capCalls.at(-1)?.response === '')
+	const madeUp = await call(bot, 'auth/signup', { ...botSignup, capToken: `${CAP_SITE_KEY}:1:made-up` })
+	check('sign-up with a made-up token is refused', madeUp.status === 400 && madeUp.json?.data?.reason === 'cap')
+	check(
+		'Cap gets the secret and the token',
+		capCalls.at(-1)?.secret === CAP_SECRET && capCalls.at(-1)?.response === `${CAP_SITE_KEY}:1:made-up`
+	)
+	const otherSite = await call(bot, 'auth/signup', { ...botSignup, capToken: 'othersite:1:abc' })
+	check('a token for another site key is refused', otherSite.status === 400 && otherSite.json?.data?.reason === 'cap')
+	const wrongForm = await call(bot, 'auth/signup', { ...botSignup, capToken: { toString: 1 } })
+	check('a token that isn’t text is refused', wrongForm.status === 400 && wrongForm.json?.data?.reason === 'cap')
+	const used = capToken()
 	check(
 		'owner signs up',
-		(await call(owner, 'auth/signup', { username: 'ben', password: 'owner password 123' })).json?.success
+		(await call(owner, 'auth/signup', { username: 'ben', password: 'owner password 123', capToken: used })).json
+			?.success
+	)
+	check(
+		'a robot account wasn’t made',
+		(await call(bot, 'auth/login', { ...botSignup, capToken: capToken() })).status === 401
+	)
+	const reused = await call(mate, 'auth/signup', { username: 'reuse', password: 'reused password 1', capToken: used })
+	check('a Cap token works once', reused.status === 400 && reused.json?.data?.reason === 'cap')
+	const noLoginToken = await call(bot, 'auth/login', { username: 'ben', password: 'owner password 123' })
+	check(
+		'sign-in without a Cap token is refused before the password is checked',
+		noLoginToken.status === 400 &&
+			noLoginToken.json?.data?.reason === 'cap' &&
+			!noLoginToken.text.includes('"user"')
+	)
+	capMode = 'down'
+	const whileDown = await call(bot, 'auth/login', { username: 'ben', password: 'owner password 123' })
+	check(
+		'sign-in goes through unverified while Cap is down',
+		whileDown.json?.success === true,
+		whileDown.text.slice(0, 160)
+	)
+	const downWrong = await call(bot, 'auth/login', { username: 'ben', password: 'not the password!' })
+	check('the password is still checked while Cap is down', downWrong.status === 401)
+	capMode = 'gone'
+	const whileGone = await call(bot, 'auth/login', { username: 'ben', password: 'owner password 123' })
+	check('sign-in goes through unverified when Cap drops the connection', whileGone.json?.success === true)
+	capMode = 'wrong-secret'
+	const wrongSecret = await call(bot, 'auth/login', {
+		username: 'ben',
+		password: 'owner password 123',
+		capToken: capToken()
+	})
+	check('a wrong Cap secret lets sign-in through unverified', wrongSecret.json?.success === true)
+	capMode = 'up'
+	await call(bot, 'auth/logout')
+	check(
+		'no response carries the Cap secret',
+		![noToken, madeUp, otherSite, reused, noLoginToken, whileDown, wrongSecret].some((r) =>
+			r.text.includes(CAP_SECRET)
+		)
 	)
 	check(
 		'username is unique',
-		(await call(mate, 'auth/signup', { username: 'BEN', password: 'another password 1' })).status === 409
+		(await call(mate, 'auth/signup', { username: 'BEN', password: 'another password 1', capToken: capToken() }))
+			.status === 409
 	)
-	const badName = await call(mate, 'auth/signup', { username: 'x', password: 'another password 1' })
+	const badName = await call(mate, 'auth/signup', {
+		username: 'x',
+		password: 'another password 1',
+		capToken: capToken()
+	})
 	check(
 		'error messages reach the browser',
 		badName.status === 400 && /^Usernames are/.test(badName.json?.message || ''),
@@ -319,11 +432,13 @@ try {
 	)
 	check(
 		'friend signs up',
-		(await call(mate, 'auth/signup', { username: 'adam', password: 'friend password 12' })).json?.success
+		(await call(mate, 'auth/signup', { username: 'adam', password: 'friend password 12', capToken: capToken() }))
+			.json?.success
 	)
 	check(
 		'outsider signs up',
-		(await call(outsider, 'auth/signup', { username: 'eve', password: 'outsider password' })).json?.success
+		(await call(outsider, 'auth/signup', { username: 'eve', password: 'outsider password', capToken: capToken() }))
+			.json?.success
 	)
 	check(
 		'a bad token isn’t added',
@@ -827,7 +942,8 @@ try {
 	check('signing out ends the session', (await call(owner, 'zones')).status === 401)
 	check(
 		'the new password works',
-		(await call(owner, 'auth/login', { username: 'Ben', password: 'a brand new password' })).json?.success
+		(await call(owner, 'auth/login', { username: 'Ben', password: 'a brand new password', capToken: capToken() }))
+			.json?.success
 	)
 
 	// Deleting an account
@@ -835,7 +951,8 @@ try {
 	check('account deletes', (await call(outsider, 'auth/delete', { password: 'outsider password' })).json?.success)
 	check(
 		'a deleted account can’t sign in',
-		(await call(outsider, 'auth/login', { username: 'eve', password: 'outsider password' })).status === 401
+		(await call(outsider, 'auth/login', { username: 'eve', password: 'outsider password', capToken: capToken() }))
+			.status === 401
 	)
 } catch (error) {
 	check('the run finished', false, error?.stack || String(error))
