@@ -76,7 +76,13 @@ export default defineNitroPlugin((nitroApp) => {
 			const who = user ? ` for ${user.username}` : ''
 			// The same failure on the same route is one line a minute, with a count.
 			const repeat = { once: `${method} ${path} ${status} ${message.slice(0, 120)}`, windowMs: 60_000 }
-			if (status >= 500)
+			// Another service failing on its side (marked by the route) is logged at info, with a rare warning.
+			if (status >= 500 && error?.data?.upstreamOutage)
+				log.outage('api', logText`${method} ${path} failed ${status}${who}: ${message}`, {
+					...facts,
+					...repeat
+				})
+			else if (status >= 500)
 				log.error('api', logText`${method} ${path} failed ${status}${who}: ${message}`, { ...facts, ...repeat })
 			else
 				log.warn('api', logText`${method} ${path} rejected ${status}${who}: ${message}`, {

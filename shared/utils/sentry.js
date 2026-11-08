@@ -96,14 +96,19 @@ export function serverSentrySettings(env = process.env) {
 
 // The browser reports only when the page isn't served from a local address, or when
 // NUXT_PUBLIC_SENTRY_FORCE=1 asks for it on purpose. `config` is the public runtime config.
-export function browserSentrySettings(config = {}, hostname = globalThis.location?.hostname) {
+// Headless and scripted browsers never report.
+export function browserSentrySettings(
+	config = {},
+	hostname = globalThis.location?.hostname,
+	navigatorLike = globalThis.navigator
+) {
 	const force = isOn(config.sentryForce)
 	const local = isLocalHostname(hostname)
 	return {
 		dsn: String(config.sentryDsn ?? '').trim(),
 		environment: String(config.sentryEnvironment ?? '').trim() || (local ? 'development' : 'production'),
 		force,
-		disabled: isOn(config.sentryDisabled) || (local && !force)
+		disabled: isOn(config.sentryDisabled) || (local && !force) || (!force && isAutomatedBrowser(navigatorLike))
 	}
 }
 
@@ -542,6 +547,102 @@ export function isDeliberateHttpError(error) {
 	return isH3 && status >= 300 && status < 500
 }
 
+// Another service (Cloudflare, OpenAI, a registry) failing on its side: a route marks the 503 it
+// answers with `data.upstreamOutage`. The line is logged at info by log.outage; it isn't an issue.
+export function isUpstreamOutageError(error) {
+	try {
+		const isH3 = error?.constructor?.__h3_error__ === true || error?.name === 'HTTPError'
+		return isH3 && Number(error.status ?? error.statusCode) >= 500 && Boolean(error.data?.upstreamOutage)
+	} catch {
+		return false
+	}
+}
+
+// What fetch() rejects with when no answer arrived, in Chrome, Safari and Firefox wording. Sentry's
+// fetch instrumentation adds the host in brackets, as in "Load failed (dns.brth.dev)".
+const FETCH_REJECTION =
+	'(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\\.?)(?: \\([^()\\s]+\\))?'
+const FETCH_REJECTION_MESSAGE = new RegExp(`^${FETCH_REJECTION}$`)
+// ofetch's FetchError for a request that got no answer: [POST] "/api/zones": <no response> Load failed.
+// Not our own 90-second timeout, which says the server didn't answer.
+const NO_RESPONSE_MESSAGE = /^\[[A-Z]+\] "[^"]*": <no response> (?!.*\b(?:timeout|timed out)\b)/i
+// The same failures inside a log line or console message, which carry a logged error as text.
+const NETWORK_FAILURE_TEXT = new RegExp(
+	`(?:^|TypeError: )${FETCH_REJECTION}$|TypeError: ${FETCH_REJECTION}(?=[\\s,.;)"']|$)|\\[[A-Z]+\\] \\\\?"[^"]*\\\\?": <no response> (?!.*\\b(?:timeout|timed out)\\b)`,
+	'i'
+)
+
+function errorChain(error) {
+	const chain = []
+	try {
+		for (
+			let value = error;
+			value && typeof value === 'object' && !chain.includes(value) && chain.length < 6;
+			value = value.cause
+		)
+			chain.push(value)
+	} catch {
+		// Keep what was read.
+	}
+	return chain
+}
+
+// A browser request that never got an answer because fetch() itself rejected: the visitor's
+// connection dropped, the tab closed or navigation cancelled it. An error status from our server,
+// our own request timeout and a TypeError thrown by our code aren't counted.
+export function isVisitorNetworkFailure(error) {
+	try {
+		for (const value of errorChain(error)) {
+			if (value.response) return false
+			const name = String(value.name ?? '')
+			const message = String(value.message ?? '')
+			if (name === 'AbortError') return true
+			if (name === 'FetchError') return NO_RESPONSE_MESSAGE.test(message)
+			if (name === 'TypeError' && FETCH_REJECTION_MESSAGE.test(message)) return true
+		}
+	} catch {
+		// Not recognised.
+	}
+	return false
+}
+
+export function isVisitorNetworkFailureEvent(event, hint) {
+	if (isVisitorNetworkFailure(hint?.originalException)) return true
+	return (event?.exception?.values || []).some(
+		({ type, value = '' }) =>
+			type === 'AbortError' ||
+			(type === 'TypeError' && FETCH_REJECTION_MESSAGE.test(value)) ||
+			(type === 'FetchError' && NO_RESPONSE_MESSAGE.test(value))
+	)
+}
+
+// A log line about a request that got no answer: its text, or the error attached to it.
+export function isVisitorNetworkFailureLog(log) {
+	try {
+		const attributes = log?.attributes || {}
+		const type = attributeValue(attributes['error.type'])
+		const message = attributeValue(attributes['error.message'])
+		if (type && isVisitorNetworkFailure({ name: type, message })) return true
+		return NETWORK_FAILURE_TEXT.test(String(log?.message ?? ''))
+	} catch {
+		return false
+	}
+}
+
+// Headless and scripted browsers (scrapers, test runners, audits) throw errors no visitor sees.
+// Googlebot is a real browser and still reports.
+const AUTOMATED_BROWSER =
+	/\b(?:Lightpanda|HeadlessChrome|PhantomJS|SlimerJS|HtmlUnit|jsdom|Zombie(?:\.js)?|Chrome-Lighthouse|Puppeteer|Playwright|Cypress|Selenium|WebDriver)\b/i
+
+export function isAutomatedBrowser(navigatorLike = globalThis.navigator) {
+	try {
+		if (!navigatorLike) return false
+		return navigatorLike.webdriver === true || AUTOMATED_BROWSER.test(String(navigatorLike.userAgent ?? ''))
+	} catch {
+		return false
+	}
+}
+
 // Cap's widget (@cap.js/widget) runs its check from its own click handler without catching the
 // result, so a failed check also surfaces as an unhandled rejection. Those errors carry one of
 // the widget's codes and are already logged once, at the right level, by components/CapCheck.vue.
@@ -561,6 +662,12 @@ const CAP_WIDGET_CODES = new Set([
 ])
 export const isCapWidgetError = (error) =>
 	error instanceof Error && typeof error.code === 'string' && CAP_WIDGET_CODES.has(error.code)
+
+// In the browser, a line about a request that got no answer is the visitor's connection: info.
+function visitorNetworkInfo(runtime, log) {
+	if (runtime !== 'browser' || !['warn', 'error', 'fatal'].includes(log?.level)) return log
+	return isVisitorNetworkFailureLog(log) ? { ...log, level: 'info', severityNumber: undefined } : log
+}
 
 // `http` replaces the SDK's default HTTP integration, to control which request bodies it reads.
 // `force` (SENTRY_FORCE) lets deliberate local testing through the local-address filter.
@@ -620,8 +727,13 @@ export function sentryOptions({
 			...(http ? [http] : []),
 			...(consoleLogs ? [consoleLogs] : [])
 		],
+		// Our faults only: not a refusal we chose to send, Cap's widget, another service failing,
+		// or a visitor's dropped connection.
 		beforeSend: (event, hint) =>
-			isDeliberateHttpError(hint?.originalException) || isCapWidgetError(hint?.originalException)
+			isDeliberateHttpError(hint?.originalException) ||
+			isCapWidgetError(hint?.originalException) ||
+			isUpstreamOutageError(hint?.originalException) ||
+			(runtime === 'browser' && isVisitorNetworkFailureEvent(event, hint))
 				? null
 				: sendEvent(event),
 		beforeSendTransaction: sendEvent,
@@ -632,7 +744,7 @@ export function sentryOptions({
 			if (echoing && fromConsole) return null
 			const warning = fromConsole ? nodeWarningLog(log) : undefined
 			if (warning === null) return null
-			return addAttributes(warning || log)
+			return addAttributes(visitorNetworkInfo(runtime, warning || log))
 		},
 		beforeSendMetric: () => null
 	}

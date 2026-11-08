@@ -55,7 +55,7 @@ export async function getTldPricing() {
 			state.failedUntil = 0
 			return value
 		} catch (error) {
-			log.warn(
+			log.outage(
 				'pricing',
 				logText`Porkbun price list unavailable${state.data ? ', using the stale copy' : ''}: ${error?.message}`,
 				{
