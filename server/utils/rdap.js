@@ -70,7 +70,7 @@ const loadBootstrap = async () => {
 			return map
 		} catch (error) {
 			const message = describeBootstrapError(error)
-			log.warn(
+			log.outage(
 				'rdap',
 				logText`IANA RDAP directory unavailable${state.bootstrap?.map ? ', using the stale copy' : ''}: ${message}`,
 				{
@@ -176,7 +176,7 @@ const lookup = async (domain) => {
 
 		if (response.status === 404) return { supported: true, available: true }
 		if (response.status === 429) {
-			log.warn('rdap', logText`${new URL(server).host} rate-limited the lookup of ${domain}`, {
+			log.outage('rdap', logText`${new URL(server).host} rate-limited the lookup of ${domain}`, {
 				domain,
 				server,
 				'http.status_code': 429,
@@ -189,7 +189,9 @@ const lookup = async (domain) => {
 			}
 		}
 		if (!response.ok) {
-			log.warn('rdap', logText`${new URL(server).host} answered ${response.status} for ${domain}`, {
+			// A registry failing on its side is theirs; any other refusal may be about our request.
+			const write = response.status >= 500 ? log.outage : log.warn
+			write('rdap', logText`${new URL(server).host} answered ${response.status} for ${domain}`, {
 				domain,
 				server,
 				'http.status_code': response.status,
@@ -206,7 +208,7 @@ const lookup = async (domain) => {
 		return { supported: true, ...parseRegistered(data) }
 	} catch (error) {
 		const message = error?.name === 'AbortError' ? 'The registry did not respond in time' : error?.message
-		log.warn('rdap', logText`lookup of ${domain} at ${server} failed: ${message}`, {
+		log.outage('rdap', logText`lookup of ${domain} at ${server} failed: ${message}`, {
 			domain,
 			server,
 			error,

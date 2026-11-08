@@ -119,23 +119,30 @@ function noteResponse({ method, url, response, data, started }) {
 	}
 	const what = !data ? 'answered without JSON' : status === 429 ? 'rate limited' : 'failed'
 	const line = logText`${method} ${path} ${what} ${status}${errors ? logText` (${errors})` : ''}`
+	// Cloudflare failing or limiting us is theirs; the page shows its message.
 	if (status >= 500 || status === 429)
-		log.warn('cloudflare', line, { ...facts, once: `${method} ${path} ${status}`, windowMs: 60_000 })
+		log.outage('cloudflare', line, { ...facts, once: `${method} ${path} ${status}`, windowMs: 60_000 })
 	else log.warn('cloudflare', line, facts)
 }
 
-// Returns null when Cloudflare doesn't answer in time; other network failures throw.
+// Node's fetch() rejects with this when the connection to Cloudflare fails or drops.
+const isConnectionFailure = (error) => error?.name === 'TypeError' && error?.message === 'fetch failed'
+
+// Resolves to { response }, or to { failed } with an error envelope when Cloudflare doesn't
+// answer in time or the connection fails. Other errors, such as a token that isn't a valid
+// header value, throw.
 const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 	const started = performance.now()
 	const method = init?.method || 'GET'
 	try {
-		return await fetch(`${API_BASE}${path}`, {
+		const response = await fetch(`${API_BASE}${path}`, {
 			...init,
 			signal: AbortSignal.timeout(timeout)
 		})
+		return { response }
 	} catch (error) {
 		if (isTimeout(error)) {
-			log.warn('cloudflare', logText`${method} ${pathOnly(path)} timed out after ${timeout} ms`, {
+			log.outage('cloudflare', logText`${method} ${pathOnly(path)} timed out after ${timeout} ms`, {
 				method,
 				path: pathOnly(path),
 				url: path,
@@ -144,11 +151,12 @@ const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 				once: `timeout ${method} ${pathOnly(path)}`,
 				windowMs: 60_000
 			})
-			return null
+			return { failed: timeoutEnvelope(timeout) }
 		}
 		const reason = error?.cause?.code || error?.message
 		// Once a minute per cause: an outage is one line with a count, not one per request.
-		log.error('cloudflare', logText`${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
+		const write = isConnectionFailure(error) ? log.outage : log.error
+		write('cloudflare', logText`${method} ${pathOnly(path)} couldn’t connect: ${reason}`, {
 			method,
 			path: pathOnly(path),
 			url: path,
@@ -157,6 +165,7 @@ const cloudflareFetch = async (path, init, timeout = REQUEST_TIMEOUT_MS) => {
 			once: `connect ${reason}`,
 			windowMs: 60_000
 		})
+		if (isConnectionFailure(error)) return { failed: errorEnvelope('Couldn’t reach Cloudflare. Try again.') }
 		throw error
 	}
 }
@@ -181,7 +190,7 @@ const performRequest = async ({ token, method, url, headers, body, rawBody, cont
 	const others = Object.fromEntries(
 		Object.entries(headers || {}).filter(([name]) => name.toLowerCase() !== 'content-type')
 	)
-	const response = await cloudflareFetch(
+	const { response, failed } = await cloudflareFetch(
 		url,
 		{
 			method,
@@ -194,7 +203,7 @@ const performRequest = async ({ token, method, url, headers, body, rawBody, cont
 		},
 		timeout
 	)
-	if (!response) return timeoutEnvelope(timeout)
+	if (failed) return failed
 
 	const data = await readJson(response, timeout)
 	noteResponse({ method, url, response, data, started })
@@ -296,7 +305,7 @@ export async function cfFetchRaw({ apiKey, method = 'GET', path, query = '', hea
 	assertSafePath(path)
 	assertSafeQuery(query)
 	const started = performance.now()
-	const response = await cloudflareFetch(
+	const { response, failed } = await cloudflareFetch(
 		`${path}${query}`,
 		{
 			method,
@@ -309,7 +318,7 @@ export async function cfFetchRaw({ apiKey, method = 'GET', path, query = '', hea
 		},
 		timeout
 	)
-	if (!response) return timeoutEnvelope(timeout)
+	if (failed) return failed
 	let bytes
 	try {
 		bytes = Buffer.from(await response.arrayBuffer())
@@ -343,12 +352,12 @@ export async function cfFetchMultipart({ apiKey, method = 'POST', path, query = 
 	assertSafePath(path)
 	assertSafeQuery(query)
 	const started = performance.now()
-	const response = await cloudflareFetch(`${path}${query}`, {
+	const { response, failed } = await cloudflareFetch(`${path}${query}`, {
 		method,
 		headers: { ...headers, Authorization: bearer(apiKey) },
 		body: form
 	})
-	if (!response) return timeoutEnvelope()
+	if (failed) return failed
 	const data = await readJson(response)
 	noteResponse({ method, url: `${path}${query}`, response, data, started })
 	if (!data) {

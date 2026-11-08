@@ -12,8 +12,12 @@ import {
 	DEFAULT_SENTRY_DSN,
 	browserSentrySettings,
 	getSentryDsn,
+	isAutomatedBrowser,
 	isDeployedServer,
 	isLocalHostname,
+	isUpstreamOutageError,
+	isVisitorNetworkFailure,
+	isVisitorNetworkFailureLog,
 	isLocalUrl,
 	isSentryTestRuntime,
 	logAttributesFor,
@@ -850,4 +854,160 @@ test('refusals thrown by server middleware are not sent as errors; failures stil
 		'Upstream library said 404',
 		'ownsZone is not a function'
 	])
+})
+
+const fetchError = (message, cause) => Object.assign(new Error(message, { cause }), { name: 'FetchError' })
+
+test('a visitor’s dropped connection is not reported from the browser, but our own errors are', () => {
+	for (const error of [
+		new TypeError('Failed to fetch'),
+		new TypeError('Load failed (dns.brth.dev)'),
+		new TypeError('NetworkError when attempting to fetch resource.'),
+		Object.assign(new Error('signal is aborted without reason'), { name: 'AbortError' }),
+		fetchError('[POST] "/api/zones": <no response> Load failed', new TypeError('Load failed')),
+		new Error('Couldn’t load', { cause: new TypeError('Failed to fetch') })
+	])
+		assert.equal(isVisitorNetworkFailure(error), true, error.message)
+	for (const error of [
+		new TypeError("Cannot read properties of null (reading 'id')"),
+		fetchError('[POST] "/api/zones": 500 Server Error'),
+		fetchError('[POST] "/api/zones": <no response> The operation was aborted due to timeout'),
+		Object.assign(fetchError('[POST] "/api/zones": <no response> Load failed'), { response: { status: 502 } }),
+		new Error('Failed to fetch'),
+		null
+	])
+		assert.equal(isVisitorNetworkFailure(error), false, String(error?.message ?? error))
+
+	const browser = sentryOptions({ dsn: DEFAULT_SENTRY_DSN, environment: 'production', runtime: 'browser' })
+	const exception = (type, value) => ({ exception: { values: [{ type, value }] } })
+	assert.equal(browser.beforeSend(exception('TypeError', 'Failed to fetch (dns.brth.dev)'), {}), null)
+	assert.equal(
+		browser.beforeSend(exception('FetchError', '[POST] "/api/zones": <no response> Load failed'), {}),
+		null
+	)
+	assert.notEqual(
+		browser.beforeSend(exception('TypeError', 'x is not a function'), {
+			originalException: new TypeError('x is not a function')
+		}),
+		null
+	)
+	// The server doesn't drop them: there, `fetch failed` is our server failing to reach something.
+	const server = sentryOptions({ dsn: DEFAULT_SENTRY_DSN, environment: 'production', runtime: 'server' })
+	assert.notEqual(
+		server.beforeSend(exception('TypeError', 'Failed to fetch'), {
+			originalException: new TypeError('Failed to fetch')
+		}),
+		null
+	)
+
+	const line = (message, attributes) => ({ level: 'warn', message, attributes })
+	assert.equal(
+		isVisitorNetworkFailureLog(
+			line('api: POST /api/zones got no answer from the server: [POST] "/api/zones": <no response> Load failed')
+		),
+		true
+	)
+	assert.equal(isVisitorNetworkFailureLog(line('Uncaught TypeError: Failed to fetch')), true)
+	assert.equal(
+		isVisitorNetworkFailureLog(
+			line('api: no answer', { 'error.type': 'TypeError', 'error.message': 'Load failed' })
+		),
+		true
+	)
+	assert.equal(
+		isVisitorNetworkFailureLog(
+			line(
+				'api: POST /api/zones got no answer from the server: [POST] "/api/zones": <no response> The operation was aborted due to timeout'
+			)
+		),
+		false
+	)
+	assert.equal(isVisitorNetworkFailureLog(line('TypeError: x is not a function')), false)
+	assert.equal(
+		browser.beforeSendLog(line('api: no answer: [POST] "/api/zones": <no response> Failed to fetch')).level,
+		'info'
+	)
+	assert.equal(browser.beforeSendLog(line('api: something broke')).level, 'warn')
+	assert.equal(server.beforeSendLog(line('Uncaught TypeError: Failed to fetch')).level, 'warn')
+})
+
+test('headless and scripted browsers don’t report; real browsers and Googlebot do', () => {
+	const config = { sentryDsn: DEFAULT_SENTRY_DSN }
+	for (const userAgent of [
+		'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 HeadlessChrome/120.0 Safari/537.36',
+		'Lightpanda/1.0',
+		'Mozilla/5.0 PhantomJS/2.1.1',
+		'Mozilla/5.0 Playwright/1.40'
+	]) {
+		assert.equal(isAutomatedBrowser({ userAgent }), true, userAgent)
+		assert.equal(browserSentrySettings(config, 'dns.brth.dev', { userAgent }).disabled, true, userAgent)
+	}
+	assert.equal(browserSentrySettings(config, 'dns.brth.dev', { userAgent: 'Safari', webdriver: true }).disabled, true)
+	for (const userAgent of [
+		'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
+		'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+	])
+		assert.equal(
+			browserSentrySettings(config, 'dns.brth.dev', { userAgent, webdriver: false }).disabled,
+			false,
+			userAgent
+		)
+	assert.equal(
+		browserSentrySettings({ ...config, sentryForce: '1' }, 'dns.brth.dev', { userAgent: 'HeadlessChrome' })
+			.disabled,
+		false,
+		'Forced on for testing'
+	)
+})
+
+test('another service failing is not an issue; our own failures still are', () => {
+	const server = sentryOptions({ dsn: DEFAULT_SENTRY_DSN, environment: 'production', runtime: 'server' })
+	const send = (error) => server.beforeSend({ message: error.message }, { originalException: error })
+	const openAiDown = createError({ statusCode: 503, message: 'OpenAI is busy', data: { upstreamOutage: 'openai' } })
+	assert.equal(isUpstreamOutageError(openAiDown), true)
+	assert.equal(send(openAiDown), null)
+	assert.notEqual(
+		send(createError({ statusCode: 502, message: 'OpenAI couldn’t prepare a plan: Incorrect API key' })),
+		null
+	)
+	assert.notEqual(send(createError({ statusCode: 500, message: 'Couldn’t load DNS records' })), null)
+	assert.equal(
+		isUpstreamOutageError(Object.assign(new Error('x'), { statusCode: 503, data: { upstreamOutage: true } })),
+		false,
+		'Only h3 errors'
+	)
+})
+
+test('outages log at info, with one warning per area every 15 minutes, and none when a stored copy covers it', async () => {
+	const envelopes = []
+	Sentry.init({
+		...sentryOptions({ dsn: DEFAULT_SENTRY_DSN, environment: 'production', runtime: 'server', host: 'web-1' }),
+		transport: () => ({
+			send: async (envelope) => {
+				envelopes.push(envelope)
+				return { statusCode: 200 }
+			},
+			flush: async () => true
+		})
+	})
+	log.outage('outage-test', 'GET /zones failed 502')
+	log.outage('outage-test', 'GET /zones failed 503')
+	log.outage('outage-test-stale', 'price list unavailable, using the stale copy', { stale: true })
+	log.outage('outage-test-stale', 'price list unavailable', { stale: false })
+	assert.equal(await Sentry.flush(2000), true)
+	await Sentry.close(2000)
+	const logs = envelopes
+		.flatMap(([, items]) => items)
+		.filter(([header]) => header.type === 'log')
+		.flatMap(([, payload]) => payload.items)
+	assert.deepEqual(
+		logs.map((item) => [item.level, item.body]),
+		[
+			['warn', 'outage-test: GET /zones failed 502'],
+			['info', 'outage-test: GET /zones failed 503'],
+			['info', 'outage-test-stale: price list unavailable, using the stale copy'],
+			['warn', 'outage-test-stale: price list unavailable']
+		]
+	)
+	assert.equal(logs[0].attributes.outage.value, true)
 })

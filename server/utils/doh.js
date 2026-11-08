@@ -86,7 +86,9 @@ export async function dohQuery({ resolver = 'cloudflare', name, type = 'A', time
 			signal: controller.signal
 		})
 		if (!response.ok) {
-			log.warn('doh', logText`${config.label} answered ${response.status} for ${type} ${name}`, {
+			// A public resolver failing or limiting us is theirs; any other refusal may be about our request.
+			const write = response.status >= 500 || response.status === 429 ? log.outage : log.warn
+			write('doh', logText`${config.label} answered ${response.status} for ${type} ${name}`, {
 				resolver,
 				name,
 				type,
@@ -114,7 +116,7 @@ export async function dohQuery({ resolver = 'cloudflare', name, type = 'A', time
 		}
 	} catch (error) {
 		const message = error?.name === 'AbortError' ? `${config.label} did not respond in time` : error?.message
-		log.warn('doh', logText`${config.label} lookup of ${type} ${name} failed: ${message}`, {
+		log.outage('doh', logText`${config.label} lookup of ${type} ${name} failed: ${message}`, {
 			resolver,
 			name,
 			type,

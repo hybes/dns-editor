@@ -30,6 +30,13 @@ const cloudflareFailure = (data, fallback) => ({
 	errors: data?.errors?.length ? data.errors : [{ message: fallback }]
 })
 
+// No answer, a timeout, a 5xx, or a rate limit that isn't our quota running out.
+const isOpenAiOutage = (error) => {
+	const status = Number(error?.status)
+	if (!status) return error instanceof OpenAI.APIConnectionError
+	return status >= 500 || (status === 429 && error?.code !== 'insufficient_quota')
+}
+
 export default defineEventHandler(async (event) => {
 	try {
 		const body = await readJsonBody(event)
@@ -90,7 +97,16 @@ export default defineEventHandler(async (event) => {
 					}
 				})
 				.catch((error) => {
-					// OpenAI's own message (bad key, quota, unknown model) is what the operator needs.
+					// OpenAI failing or busy on its side isn't ours to fix. A bad key, a used-up quota or an
+					// unknown model is, and OpenAI's own message is what the operator needs.
+					if (isOpenAiOutage(error)) {
+						throw createError({
+							statusCode: 503,
+							cause: error,
+							data: { upstreamOutage: 'openai' },
+							message: 'OpenAI is busy or unavailable right now. Try again in a minute.'
+						})
+					}
 					throw createError({
 						statusCode: 502,
 						cause: error,

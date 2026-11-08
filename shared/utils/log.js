@@ -119,10 +119,30 @@ function write(level, area, message, attributes = {}) {
 	}
 }
 
+// Another service failing on its side (Cloudflare, a registry, a DNS resolver or OpenAI answering
+// 5xx or 429, timing out or dropping the connection) isn't a fault of ours. It's logged at info,
+// with one warning per area every 15 minutes while it lasts, or only at info when a stored copy
+// covers it (`stale: true`).
+const OUTAGE_WARN_MS = 15 * 60_000
+const outageWarnings = new Map()
+
+function outage(area, message, attributes = {}) {
+	try {
+		const key = logValue(area)
+		const now = Date.now()
+		const warn = !attributes?.stale && !(outageWarnings.get(key) > now)
+		if (warn) outageWarnings.set(key, now + OUTAGE_WARN_MS)
+		write(warn ? 'warn' : 'info', area, message, { ...attributes, outage: true })
+	} catch {
+		// Logging must never break the request it describes.
+	}
+}
+
 export const log = {
 	info: (area, message, attributes) => write('info', area, message, attributes),
 	warn: (area, message, attributes) => write('warn', area, message, attributes),
-	error: (area, message, attributes) => write('error', area, message, attributes)
+	error: (area, message, attributes) => write('error', area, message, attributes),
+	outage
 }
 
 // Milliseconds since `start` (from performance.now()), rounded, for durations in lines.
